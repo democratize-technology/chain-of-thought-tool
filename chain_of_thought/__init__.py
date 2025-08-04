@@ -22,7 +22,10 @@ from .core import (
     get_chain_summary_handler, 
     clear_chain_handler,
     ChainOfThought,
-    ThreadAwareChainOfThought
+    ThreadAwareChainOfThought,
+    StopReasonHandler,
+    BedrockStopReasonHandler,
+    AsyncChainOfThoughtProcessor
 )
 
 # Tool specifications compatible with Converse API format
@@ -132,6 +135,9 @@ __all__ = [
     "HANDLERS", 
     "ChainOfThought",
     "ThreadAwareChainOfThought",
+    "StopReasonHandler",
+    "BedrockStopReasonHandler",
+    "AsyncChainOfThoughtProcessor",
     "chain_of_thought_step_handler",
     "get_chain_summary_handler",
     "clear_chain_handler"

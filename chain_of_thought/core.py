@@ -1,10 +1,12 @@
 """
 Chain of Thought Tool - Core Implementation
 """
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Callable, Awaitable
 from dataclasses import dataclass, asdict
 from datetime import datetime
 import json
+import asyncio
+from abc import ABC, abstractmethod
 
 
 @dataclass
@@ -262,6 +264,164 @@ def clear_chain_handler() -> str:
         return json.dumps(result, indent=2)
     except Exception as e:
         return json.dumps({"status": "error", "message": str(e)}, indent=2)
+
+
+class StopReasonHandler(ABC):
+    """Abstract base for handling stopReason integration with CoT."""
+    
+    @abstractmethod
+    async def should_continue_reasoning(self, chain: ChainOfThought) -> bool:
+        """Return True if reasoning should continue, False if end_turn."""
+        pass
+    
+    @abstractmethod
+    async def execute_tool_call(self, tool_name: str, tool_args: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a tool call and return the result."""
+        pass
+
+
+class BedrockStopReasonHandler(StopReasonHandler):
+    """Bedrock-specific stop reason handler that integrates with CoT flow."""
+    
+    def __init__(self, handlers: Optional[Dict[str, Callable]] = None):
+        self.handlers = handlers or {
+            "chain_of_thought_step": chain_of_thought_step_handler,
+            "get_chain_summary": get_chain_summary_handler,
+            "clear_chain": clear_chain_handler
+        }
+    
+    async def should_continue_reasoning(self, chain: ChainOfThought) -> bool:
+        """Check if CoT indicates more steps needed."""
+        if not chain.steps:
+            return True  # No steps yet, continue
+        
+        last_step = chain.steps[-1]
+        return last_step.next_step_needed
+    
+    async def execute_tool_call(self, tool_name: str, tool_args: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute CoT tool call asynchronously."""
+        if tool_name not in self.handlers:
+            raise ValueError(f"Unknown tool: {tool_name}")
+        
+        handler = self.handlers[tool_name]
+        
+        # Run handler in executor if it's synchronous
+        if asyncio.iscoroutinefunction(handler):
+            result = await handler(**tool_args)
+        else:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, lambda: handler(**tool_args))
+        
+        # Parse JSON result if it's a string
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except json.JSONDecodeError:
+                result = {"status": "error", "message": "Invalid JSON response"}
+        
+        return result
+
+
+class AsyncChainOfThoughtProcessor:
+    """Async wrapper for CoT that integrates with Bedrock tool loops."""
+    
+    def __init__(self, conversation_id: str, stop_handler: Optional[StopReasonHandler] = None):
+        self.conversation_id = conversation_id
+        self.chain = ChainOfThought()
+        self.stop_handler = stop_handler or BedrockStopReasonHandler()
+        self._tool_use_count = 0
+        self._max_iterations = 20
+    
+    async def process_tool_loop(self, 
+                              bedrock_client,
+                              initial_request: Dict[str, Any],
+                              max_iterations: Optional[int] = None) -> Dict[str, Any]:
+        """Process Bedrock tool loop with CoT integration."""
+        
+        max_iter = max_iterations or self._max_iterations
+        messages = initial_request.get("messages", []).copy()
+        
+        for iteration in range(max_iter):
+            # Call Bedrock
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None, 
+                lambda: bedrock_client.converse(**{**initial_request, "messages": messages})
+            )
+            
+            stop_reason = response.get("stopReason")
+            
+            if stop_reason == "end_turn":
+                # Check if CoT actually wants to continue
+                should_continue = await self.stop_handler.should_continue_reasoning(self.chain)
+                if not should_continue:
+                    return response
+                # If CoT wants to continue but Bedrock says end_turn, we're done
+                return response
+            
+            elif stop_reason == "tool_use":
+                # Process tool calls
+                message_content = response.get("output", {}).get("message", {}).get("content", [])
+                tool_results = []
+                
+                for content_item in message_content:
+                    if "toolUse" in content_item:
+                        tool_use = content_item["toolUse"]
+                        tool_name = tool_use["name"]
+                        tool_input = tool_use["input"]
+                        tool_use_id = tool_use["toolUseId"]
+                        
+                        try:
+                            # Execute tool via our handler
+                            result = await self.stop_handler.execute_tool_call(tool_name, tool_input)
+                            tool_results.append({
+                                "toolResult": {
+                                    "toolUseId": tool_use_id,
+                                    "content": [{"text": json.dumps(result)}]
+                                }
+                            })
+                        except Exception as e:
+                            tool_results.append({
+                                "toolResult": {
+                                    "toolUseId": tool_use_id,
+                                    "content": [{"text": json.dumps({"error": str(e)})}],
+                                    "status": "error"
+                                }
+                            })
+                
+                # Add assistant message and tool results to conversation
+                messages.append(response["output"]["message"])
+                if tool_results:
+                    messages.append({
+                        "role": "user",
+                        "content": tool_results
+                    })
+                
+                self._tool_use_count += len(tool_results)
+            
+            else:
+                # Unexpected stop reason
+                return response
+        
+        # Max iterations reached
+        return {
+            "stopReason": "max_tokens",
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"text": "Maximum reasoning iterations reached."}]
+                }
+            }
+        }
+    
+    async def get_reasoning_summary(self) -> Dict[str, Any]:
+        """Get summary of the reasoning process."""
+        return self.chain.generate_summary()
+    
+    def clear_reasoning(self) -> Dict[str, Any]:
+        """Clear the reasoning chain."""
+        self._tool_use_count = 0
+        return self.chain.clear_chain()
 
 
 class ThreadAwareChainOfThought:
