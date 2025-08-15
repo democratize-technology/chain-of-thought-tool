@@ -27,7 +27,6 @@ setup(
     ],
     python_requires=">=3.8",
     install_requires=[
-        # No external dependencies - pure Python
     ],
     extras_require={
         "dev": [

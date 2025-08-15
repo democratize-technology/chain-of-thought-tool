@@ -87,7 +87,6 @@ class ChainOfThought:
                     )
                     return self._generate_feedback(self.steps[i], is_revision=True)
         
-        # Create new step
         step = ThoughtStep(
             thought=thought,
             step_number=step_number,
@@ -111,7 +110,6 @@ class ChainOfThought:
         
         feedback_parts = []
         
-        # Stage-specific guidance
         stage_guidance = {
             "Problem Definition": "Foundation established. Ensure the problem is clearly scoped.",
             "Research": "Gathering information. Consider multiple sources and perspectives.",
@@ -123,21 +121,17 @@ class ChainOfThought:
         if step.reasoning_stage in stage_guidance:
             feedback_parts.append(stage_guidance[step.reasoning_stage])
         
-        # Confidence assessment
         if step.confidence < 0.5:
             feedback_parts.append("Low confidence detected. Consider gathering more evidence.")
         elif step.confidence > 0.9:
             feedback_parts.append("High confidence. Ensure assumptions are well-founded.")
         
-        # Dependency analysis
         if step.dependencies:
             feedback_parts.append(f"Building on steps: {', '.join(map(str, step.dependencies))}")
         
-        # Contradiction handling
         if step.contradicts:
             feedback_parts.append(f"Contradicts steps: {', '.join(map(str, step.contradicts))}. Consider reconciliation.")
         
-        # Progress tracking
         progress = step.step_number / step.total_steps
         if progress >= 0.8 and step.next_step_needed:
             feedback_parts.append("Approaching conclusion. Consider synthesis of insights.")
@@ -176,7 +170,6 @@ class ChainOfThought:
                 stages[step.reasoning_stage] = []
             stages[step.reasoning_stage].append(step)
         
-        # Collect all evidence and assumptions
         all_evidence = set()
         all_assumptions = set()
         contradiction_pairs = []
@@ -188,7 +181,6 @@ class ChainOfThought:
                 for contradicted in step.contradicts:
                     contradiction_pairs.append((step.step_number, contradicted))
         
-        # Calculate confidence metrics
         confidence_by_stage = {}
         for stage, steps_in_stage in stages.items():
             avg_confidence = sum(s.confidence for s in steps_in_stage) / len(steps_in_stage)
@@ -312,7 +304,6 @@ class BedrockStopReasonHandler(StopReasonHandler):
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(None, lambda: handler(**tool_args))
         
-        # Parse JSON result if it's a string
         if isinstance(result, str):
             try:
                 result = json.loads(result)
@@ -342,7 +333,6 @@ class AsyncChainOfThoughtProcessor:
         messages = initial_request.get("messages", []).copy()
         
         for iteration in range(max_iter):
-            # Call Bedrock
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 None, 
@@ -360,7 +350,6 @@ class AsyncChainOfThoughtProcessor:
                 return response
             
             elif stop_reason == "tool_use":
-                # Process tool calls
                 message_content = response.get("output", {}).get("message", {}).get("content", [])
                 tool_results = []
                 
@@ -372,7 +361,6 @@ class AsyncChainOfThoughtProcessor:
                         tool_use_id = tool_use["toolUseId"]
                         
                         try:
-                            # Execute tool via our handler
                             result = await self.stop_handler.execute_tool_call(tool_name, tool_input)
                             tool_results.append({
                                 "toolResult": {
@@ -389,7 +377,6 @@ class AsyncChainOfThoughtProcessor:
                                 }
                             })
                 
-                # Add assistant message and tool results to conversation
                 messages.append(response["output"]["message"])
                 if tool_results:
                     messages.append({
@@ -403,7 +390,6 @@ class AsyncChainOfThoughtProcessor:
                 # Unexpected stop reason
                 return response
         
-        # Max iterations reached
         return {
             "stopReason": "max_tokens",
             "output": {

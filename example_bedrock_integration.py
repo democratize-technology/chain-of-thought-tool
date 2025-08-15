@@ -13,15 +13,12 @@ from chain_of_thought import TOOL_SPECS, AsyncChainOfThoughtProcessor
 async def main():
     """Example of running CoT with Bedrock using stopReason pattern."""
     
-    # Initialize Bedrock client
     client = boto3.client('bedrock-runtime', region_name='us-east-1')
     
-    # Create CoT processor for this conversation
     cot_processor = AsyncChainOfThoughtProcessor(
         conversation_id="example-session-123"
     )
     
-    # Build initial request with CoT tools
     request = {
         "modelId": "anthropic.claude-3-sonnet-20240229-v1:0",
         "messages": [
@@ -52,7 +49,6 @@ async def main():
     print("=" * 60)
     
     try:
-        # Process the tool loop - this handles stopReason automatically
         result = await cot_processor.process_tool_loop(
             bedrock_client=client,
             initial_request=request,
@@ -62,7 +58,6 @@ async def main():
         print("✅ Analysis complete!")
         print(f"Stop reason: {result.get('stopReason')}")
         
-        # Get the final response
         if "output" in result and "message" in result["output"]:
             final_content = result["output"]["message"].get("content", [])
             for item in final_content:
@@ -71,7 +66,6 @@ async def main():
                     print("-" * 40)
                     print(item["text"])
         
-        # Get reasoning summary
         summary = await cot_processor.get_reasoning_summary()
         print(f"\n🧠 Reasoning Summary:")
         print("-" * 40)
