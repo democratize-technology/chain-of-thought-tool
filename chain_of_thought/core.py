@@ -227,6 +227,143 @@ class ChainOfThought:
         }
 
 
+@dataclass
+class Hypothesis:
+    """Represents a single hypothesis for explaining an observation."""
+    hypothesis_text: str
+    hypothesis_type: str  # scientific, intuitive, contrarian, systematic
+    confidence: float = 0.8
+    testability_score: float = 0.7
+    reasoning: str = ""
+    evidence_requirements: Optional[List[str]] = None
+    timestamp: str = None
+    
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = datetime.now().isoformat()
+        if self.evidence_requirements is None:
+            self.evidence_requirements = []
+
+
+class HypothesisGenerator:
+    """
+    Hypothesis generator that creates diverse explanations for observations.
+    """
+    
+    def __init__(self):
+        self.hypotheses: List[Hypothesis] = []
+        self.metadata: Dict[str, Any] = {
+            "created_at": datetime.now().isoformat(),
+            "generation_count": 0
+        }
+    
+    def generate_hypotheses(
+        self,
+        observation: str,
+        hypothesis_count: int = 4
+    ) -> Dict[str, Any]:
+        """
+        Generate diverse hypotheses for the given observation.
+        
+        Returns analysis and ranked hypotheses.
+        """
+        
+        # Clear previous hypotheses for new observation
+        self.hypotheses.clear()
+        
+        # Generate different types of hypotheses
+        hypothesis_types = ["scientific", "intuitive", "contrarian", "systematic"]
+        
+        # Ensure we don't generate more than requested
+        types_to_generate = hypothesis_types[:hypothesis_count]
+        
+        for i, hypothesis_type in enumerate(types_to_generate):
+            hypothesis = self._generate_hypothesis_by_type(observation, hypothesis_type, i + 1)
+            self.hypotheses.append(hypothesis)
+        
+        # Rank by testability
+        ranked_hypotheses = sorted(self.hypotheses, key=lambda h: h.testability_score, reverse=True)
+        
+        self.metadata["generation_count"] += 1
+        self.metadata["last_generated"] = datetime.now().isoformat()
+        
+        return {
+            "status": "success",
+            "observation": observation,
+            "hypotheses_generated": len(ranked_hypotheses),
+            "hypotheses": [
+                {
+                    "rank": i + 1,
+                    "text": h.hypothesis_text,
+                    "type": h.hypothesis_type,
+                    "confidence": h.confidence,
+                    "testability": h.testability_score,
+                    "reasoning": h.reasoning,
+                    "evidence_needed": h.evidence_requirements
+                }
+                for i, h in enumerate(ranked_hypotheses)
+            ],
+            "insights": {
+                "most_testable": ranked_hypotheses[0].hypothesis_type if ranked_hypotheses else None,
+                "highest_confidence": max((h.confidence for h in ranked_hypotheses), default=0),
+                "types_generated": [h.hypothesis_type for h in ranked_hypotheses]
+            },
+            "metadata": self.metadata
+        }
+    
+    def _generate_hypothesis_by_type(self, observation: str, hypothesis_type: str, rank: int) -> Hypothesis:
+        """Generate a hypothesis of a specific type."""
+        
+        if hypothesis_type == "scientific":
+            return Hypothesis(
+                hypothesis_text=f"Based on empirical evidence, {observation.lower()} could be explained by measurable factors that follow established patterns or laws.",
+                hypothesis_type="scientific",
+                confidence=0.8,
+                testability_score=0.9,
+                reasoning="Scientific approach focuses on testable, measurable explanations",
+                evidence_requirements=["Quantitative data", "Control groups", "Reproducible experiments"]
+            )
+        elif hypothesis_type == "intuitive":
+            return Hypothesis(
+                hypothesis_text=f"Pattern recognition suggests that {observation.lower()} fits a familiar template based on previous similar situations.",
+                hypothesis_type="intuitive",
+                confidence=0.7,
+                testability_score=0.6,
+                reasoning="Intuitive approach leverages pattern matching and heuristics",
+                evidence_requirements=["Historical precedents", "Pattern analysis", "Expert judgment"]
+            )
+        elif hypothesis_type == "contrarian":
+            return Hypothesis(
+                hypothesis_text=f"Contrary to obvious explanations, {observation.lower()} might be caused by the opposite of what initially appears likely.",
+                hypothesis_type="contrarian",
+                confidence=0.6,
+                testability_score=0.8,
+                reasoning="Contrarian approach challenges conventional assumptions",
+                evidence_requirements=["Alternative data sources", "Assumption validation", "Devil's advocate analysis"]
+            )
+        elif hypothesis_type == "systematic":
+            return Hypothesis(
+                hypothesis_text=f"A systematic breakdown of {observation.lower()} reveals multiple interconnected factors that must be analyzed hierarchically.",
+                hypothesis_type="systematic",
+                confidence=0.75,
+                testability_score=0.85,
+                reasoning="Systematic approach breaks complex observations into manageable components",
+                evidence_requirements=["Component analysis", "System mapping", "Dependency tracking"]
+            )
+        else:
+            return Hypothesis(
+                hypothesis_text=f"General explanation for {observation.lower()} based on available information.",
+                hypothesis_type="general",
+                confidence=0.5,
+                testability_score=0.5,
+                reasoning="Default hypothesis when type is unrecognized"
+            )
+
+
+# Global instance for simple usage
+_hypothesis_generator = HypothesisGenerator()
+
+
 # Global instance for simple usage
 _chain_processor = ChainOfThought()
 
@@ -253,6 +390,15 @@ def clear_chain_handler() -> str:
     """Handler function for the clear_chain tool."""
     try:
         result = _chain_processor.clear_chain()
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"status": "error", "message": str(e)}, indent=2)
+
+
+def generate_hypotheses_handler(**kwargs) -> str:
+    """Handler function for the generate_hypotheses tool."""
+    try:
+        result = _hypothesis_generator.generate_hypotheses(**kwargs)
         return json.dumps(result, indent=2)
     except Exception as e:
         return json.dumps({"status": "error", "message": str(e)}, indent=2)

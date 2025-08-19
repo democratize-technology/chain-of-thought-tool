@@ -21,6 +21,7 @@ from .core import (
     chain_of_thought_step_handler,
     get_chain_summary_handler, 
     clear_chain_handler,
+    generate_hypotheses_handler,
     ChainOfThought,
     ThreadAwareChainOfThought,
     StopReasonHandler,
@@ -119,6 +120,31 @@ TOOL_SPECS = [
                 }
             }
         }
+    },
+    {
+        "toolSpec": {
+            "name": "generate_hypotheses",
+            "description": "Generate diverse hypotheses to explain an observation. Creates scientific, intuitive, contrarian, and systematic explanations ranked by testability.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "observation": {
+                            "type": "string",
+                            "description": "The observation or phenomenon to generate hypotheses for"
+                        },
+                        "hypothesis_count": {
+                            "type": "integer",
+                            "description": "Number of hypotheses to generate (1-4)",
+                            "minimum": 1,
+                            "maximum": 4,
+                            "default": 4
+                        }
+                    },
+                    "required": ["observation"]
+                }
+            }
+        }
     }
 ]
 
@@ -126,7 +152,8 @@ TOOL_SPECS = [
 HANDLERS = {
     "chain_of_thought_step": chain_of_thought_step_handler,
     "get_chain_summary": get_chain_summary_handler,
-    "clear_chain": clear_chain_handler
+    "clear_chain": clear_chain_handler,
+    "generate_hypotheses": generate_hypotheses_handler
 }
 
 # Convenience exports
@@ -140,7 +167,8 @@ __all__ = [
     "AsyncChainOfThoughtProcessor",
     "chain_of_thought_step_handler",
     "get_chain_summary_handler",
-    "clear_chain_handler"
+    "clear_chain_handler",
+    "generate_hypotheses_handler"
 ]
 
 # Version info
