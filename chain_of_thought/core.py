@@ -631,6 +631,235 @@ class AssumptionMapper:
 _assumption_mapper = AssumptionMapper()
 
 
+@dataclass
+class ConfidenceAssessment:
+    """Represents a confidence calibration assessment."""
+    original_confidence: float
+    calibrated_confidence: float
+    confidence_band: tuple  # (lower_bound, upper_bound)
+    overconfidence_indicators: Optional[List[str]] = None
+    calibration_reasoning: str = ""
+    uncertainty_factors: Optional[List[str]] = None
+    timestamp: str = None
+    
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = datetime.now().isoformat()
+        if self.overconfidence_indicators is None:
+            self.overconfidence_indicators = []
+        if self.uncertainty_factors is None:
+            self.uncertainty_factors = []
+        
+        # Ensure confidence values are in valid range
+        self.original_confidence = max(0.0, min(1.0, self.original_confidence))
+        self.calibrated_confidence = max(0.0, min(1.0, self.calibrated_confidence))
+
+
+class ConfidenceCalibrator:
+    """
+    Confidence calibrator that adjusts overconfident predictions and provides uncertainty bounds.
+    """
+    
+    def __init__(self):
+        self.assessments: List[ConfidenceAssessment] = []
+        self.metadata: Dict[str, Any] = {
+            "created_at": datetime.now().isoformat(),
+            "calibration_count": 0
+        }
+    
+    def detect_overconfidence_patterns(self, prediction: str, confidence: float) -> Dict[str, Any]:
+        """Detect patterns that suggest overconfidence."""
+        indicators = []
+        overconfidence_score = 0.0
+        
+        # Very high confidence (>0.9) is often overconfident
+        if confidence > 0.9:
+            indicators.append("Very high initial confidence (>90%)")
+            overconfidence_score += 0.3
+        
+        # Absolute language suggests overconfidence
+        absolute_words = ["always", "never", "definitely", "certainly", "absolutely", "guaranteed", "impossible"]
+        if any(word in prediction.lower() for word in absolute_words):
+            indicators.append("Contains absolute language suggesting overconfidence")
+            overconfidence_score += 0.2
+        
+        # Future predictions are inherently uncertain
+        future_words = ["will", "going to", "by 2030", "by 2025", "next year", "soon"]
+        if any(word in prediction.lower() for word in future_words):
+            indicators.append("Future prediction with inherent uncertainty")
+            overconfidence_score += 0.15
+        
+        # Complex predictions (multiple factors) often overconfident
+        complexity_indicators = ["and", "because", "due to", "multiple", "various", "complex"]
+        complexity_count = sum(1 for word in complexity_indicators if word in prediction.lower())
+        if complexity_count >= 2:
+            indicators.append("Complex prediction with multiple factors")
+            overconfidence_score += 0.1
+        
+        # Technology predictions are notoriously overconfident
+        tech_words = ["ai", "artificial intelligence", "agi", "technology", "innovation", "breakthrough"]
+        if any(word in prediction.lower() for word in tech_words):
+            indicators.append("Technology prediction (historically overconfident domain)")
+            overconfidence_score += 0.1
+        
+        # Statistical/quantitative claims without evidence
+        if any(char.isdigit() for char in prediction) and confidence > 0.8:
+            indicators.append("Quantitative claim with high confidence but no cited evidence")
+            overconfidence_score += 0.15
+        
+        return {
+            "indicators": indicators,
+            "overconfidence_score": min(1.0, overconfidence_score),
+            "risk_level": "high" if overconfidence_score > 0.4 else "medium" if overconfidence_score > 0.2 else "low"
+        }
+    
+    def calculate_uncertainty_bands(self, confidence: float) -> tuple:
+        """Calculate realistic uncertainty bands around the confidence estimate."""
+        
+        # Base uncertainty depends on confidence level
+        if confidence > 0.95:
+            # Very high confidence - add significant uncertainty
+            uncertainty = 0.15
+        elif confidence > 0.8:
+            # High confidence - moderate uncertainty
+            uncertainty = 0.1
+        elif confidence > 0.6:
+            # Medium confidence - some uncertainty
+            uncertainty = 0.08
+        else:
+            # Low confidence - less additional uncertainty needed
+            uncertainty = 0.05
+        
+        # Calculate bounds
+        lower_bound = max(0.0, confidence - uncertainty)
+        upper_bound = min(1.0, confidence + uncertainty)
+        
+        return (round(lower_bound, 3), round(upper_bound, 3))
+    
+    def apply_calibration_adjustment(self, original_confidence: float, overconfidence_score: float) -> float:
+        """Apply calibration adjustment based on overconfidence indicators."""
+        
+        # Calculate adjustment factor based on overconfidence score
+        # Higher overconfidence score = larger downward adjustment
+        adjustment_factor = overconfidence_score * 0.3  # Max 30% reduction
+        
+        # Apply adjustment
+        adjusted_confidence = original_confidence * (1 - adjustment_factor)
+        
+        # Ensure we don't go below a reasonable minimum
+        adjusted_confidence = max(0.1, adjusted_confidence)
+        
+        return round(adjusted_confidence, 3)
+    
+    def calibrate_confidence(
+        self,
+        prediction: str,
+        initial_confidence: float,
+        context: str = ""
+    ) -> Dict[str, Any]:
+        """
+        Calibrate confidence for the given prediction.
+        
+        Args:
+            prediction: The prediction or claim to calibrate
+            initial_confidence: Initial confidence level (0.0-1.0)
+            context: Optional additional context for calibration
+            
+        Returns calibrated confidence with uncertainty bands and reasoning.
+        """
+        
+        # Validate inputs
+        initial_confidence = max(0.0, min(1.0, initial_confidence))
+        
+        # Detect overconfidence patterns
+        overconfidence_analysis = self.detect_overconfidence_patterns(prediction, initial_confidence)
+        
+        # Apply calibration adjustment
+        calibrated_confidence = self.apply_calibration_adjustment(
+            initial_confidence, 
+            overconfidence_analysis["overconfidence_score"]
+        )
+        
+        # Calculate uncertainty bands
+        uncertainty_band = self.calculate_uncertainty_bands(calibrated_confidence)
+        
+        # Identify uncertainty factors
+        uncertainty_factors = []
+        
+        # Add context-specific uncertainty factors
+        if "future" in prediction.lower() or any(word in prediction.lower() for word in ["will", "going to", "by 20"]):
+            uncertainty_factors.append("Temporal uncertainty - future events")
+        
+        if "technology" in prediction.lower() or "ai" in prediction.lower():
+            uncertainty_factors.append("Technology uncertainty - rapid change domain")
+        
+        if len(prediction.split()) > 20:
+            uncertainty_factors.append("Complexity uncertainty - multiple interconnected factors")
+        
+        if context and "limited data" in context.lower():
+            uncertainty_factors.append("Data uncertainty - limited information available")
+        
+        # Generate calibration reasoning
+        adjustment_magnitude = abs(calibrated_confidence - initial_confidence)
+        
+        if adjustment_magnitude > 0.15:
+            reasoning = f"Significant confidence reduction ({adjustment_magnitude:.2f}) due to strong overconfidence indicators."
+        elif adjustment_magnitude > 0.05:
+            reasoning = f"Moderate confidence adjustment ({adjustment_magnitude:.2f}) due to uncertainty factors."
+        else:
+            reasoning = f"Minor confidence adjustment ({adjustment_magnitude:.2f}) - original estimate reasonably calibrated."
+        
+        if overconfidence_analysis["risk_level"] == "high":
+            reasoning += " High overconfidence risk detected."
+        
+        # Create assessment
+        assessment = ConfidenceAssessment(
+            original_confidence=initial_confidence,
+            calibrated_confidence=calibrated_confidence,
+            confidence_band=uncertainty_band,
+            overconfidence_indicators=overconfidence_analysis["indicators"],
+            calibration_reasoning=reasoning,
+            uncertainty_factors=uncertainty_factors
+        )
+        
+        self.assessments.append(assessment)
+        self.metadata["calibration_count"] += 1
+        self.metadata["last_calibrated"] = datetime.now().isoformat()
+        
+        return {
+            "status": "success",
+            "prediction": prediction,
+            "original_confidence": initial_confidence,
+            "calibrated_confidence": calibrated_confidence,
+            "confidence_band": {
+                "lower_bound": uncertainty_band[0],
+                "upper_bound": uncertainty_band[1],
+                "range": round(uncertainty_band[1] - uncertainty_band[0], 3)
+            },
+            "adjustment": {
+                "magnitude": round(adjustment_magnitude, 3),
+                "direction": "down" if calibrated_confidence < initial_confidence else "up",
+                "reasoning": reasoning
+            },
+            "overconfidence_analysis": {
+                "risk_level": overconfidence_analysis["risk_level"],
+                "indicators": overconfidence_analysis["indicators"],
+                "score": overconfidence_analysis["overconfidence_score"]
+            },
+            "uncertainty_factors": uncertainty_factors,
+            "insights": {
+                "confidence_appropriate": adjustment_magnitude < 0.1,
+                "high_uncertainty": uncertainty_band[1] - uncertainty_band[0] > 0.2,
+                "needs_more_evidence": len(overconfidence_analysis["indicators"]) > 2
+            },
+            "metadata": self.metadata
+        }
+
+
+# Global instance for simple usage
+_confidence_calibrator = ConfidenceCalibrator()
+
+
 # Global instance for simple usage
 _chain_processor = ChainOfThought()
 
@@ -675,6 +904,15 @@ def map_assumptions_handler(**kwargs) -> str:
     """Handler function for the map_assumptions tool."""
     try:
         result = _assumption_mapper.map_assumptions(**kwargs)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"status": "error", "message": str(e)}, indent=2)
+
+
+def calibrate_confidence_handler(**kwargs) -> str:
+    """Handler function for the calibrate_confidence tool."""
+    try:
+        result = _confidence_calibrator.calibrate_confidence(**kwargs)
         return json.dumps(result, indent=2)
     except Exception as e:
         return json.dumps({"status": "error", "message": str(e)}, indent=2)

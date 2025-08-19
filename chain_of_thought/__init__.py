@@ -23,6 +23,7 @@ from .core import (
     clear_chain_handler,
     generate_hypotheses_handler,
     map_assumptions_handler,
+    calibrate_confidence_handler,
     ChainOfThought,
     ThreadAwareChainOfThought,
     StopReasonHandler,
@@ -170,6 +171,35 @@ TOOL_SPECS = [
                 }
             }
         }
+    },
+    {
+        "toolSpec": {
+            "name": "calibrate_confidence",
+            "description": "Calibrate confidence levels and provide realistic uncertainty bounds. Detects overconfidence patterns and adjusts predictions with uncertainty bands.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "prediction": {
+                            "type": "string",
+                            "description": "The prediction or claim to calibrate confidence for"
+                        },
+                        "initial_confidence": {
+                            "type": "number",
+                            "description": "Initial confidence level (0.0-1.0)",
+                            "minimum": 0.0,
+                            "maximum": 1.0
+                        },
+                        "context": {
+                            "type": "string",
+                            "description": "Optional additional context for calibration analysis",
+                            "default": ""
+                        }
+                    },
+                    "required": ["prediction", "initial_confidence"]
+                }
+            }
+        }
     }
 ]
 
@@ -179,7 +209,8 @@ HANDLERS = {
     "get_chain_summary": get_chain_summary_handler,
     "clear_chain": clear_chain_handler,
     "generate_hypotheses": generate_hypotheses_handler,
-    "map_assumptions": map_assumptions_handler
+    "map_assumptions": map_assumptions_handler,
+    "calibrate_confidence": calibrate_confidence_handler
 }
 
 # Convenience exports
@@ -195,7 +226,8 @@ __all__ = [
     "get_chain_summary_handler",
     "clear_chain_handler",
     "generate_hypotheses_handler",
-    "map_assumptions_handler"
+    "map_assumptions_handler",
+    "calibrate_confidence_handler"
 ]
 
 # Version info
