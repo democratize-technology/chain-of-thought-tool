@@ -364,6 +364,273 @@ class HypothesisGenerator:
 _hypothesis_generator = HypothesisGenerator()
 
 
+@dataclass
+class Assumption:
+    """Represents a single assumption identified in a statement."""
+    statement: str
+    assumption_type: str  # explicit, implicit
+    confidence: float = 0.8
+    dependencies: Optional[List[str]] = None
+    is_critical: bool = False
+    reasoning: str = ""
+    validation_methods: Optional[List[str]] = None
+    timestamp: str = None
+    
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = datetime.now().isoformat()
+        if self.dependencies is None:
+            self.dependencies = []
+        if self.validation_methods is None:
+            self.validation_methods = []
+
+
+class AssumptionMapper:
+    """
+    Assumption mapper that identifies and categorizes assumptions in statements.
+    """
+    
+    def __init__(self):
+        self.assumptions: List[Assumption] = []
+        self.metadata: Dict[str, Any] = {
+            "created_at": datetime.now().isoformat(),
+            "mapping_count": 0
+        }
+    
+    def extract_explicit_assumptions(self, statement: str) -> List[Assumption]:
+        """Extract explicitly stated assumptions from the statement."""
+        assumptions = []
+        
+        # Look for explicit assumption indicators
+        assumption_indicators = [
+            "assuming", "given that", "if we assume", "provided that",
+            "taking for granted", "presupposing", "based on the premise"
+        ]
+        
+        # Simulate finding explicit assumptions based on linguistic patterns
+        if any(indicator in statement.lower() for indicator in assumption_indicators):
+            assumptions.append(Assumption(
+                statement=f"Explicit assumption found in: '{statement[:50]}...'",
+                assumption_type="explicit",
+                confidence=0.9,
+                is_critical=True,
+                reasoning="Statement contains explicit assumption indicators",
+                validation_methods=["Textual analysis", "Logical parsing"]
+            ))
+        
+        # Look for conditional statements that reveal assumptions
+        if any(word in statement.lower() for word in ["if", "when", "unless", "provided"]):
+            assumptions.append(Assumption(
+                statement=f"Conditional assumption in statement about prerequisites",
+                assumption_type="explicit",
+                confidence=0.8,
+                is_critical=False,
+                reasoning="Conditional language reveals explicit preconditions",
+                validation_methods=["Conditional logic analysis"]
+            ))
+        
+        return assumptions
+    
+    def identify_implicit_assumptions(self, statement: str) -> List[Assumption]:
+        """Identify unstated assumptions underlying the statement."""
+        assumptions = []
+        
+        # Domain-specific implicit assumptions
+        if "market" in statement.lower() or "business" in statement.lower():
+            assumptions.append(Assumption(
+                statement="Market behavior follows rational economic principles",
+                assumption_type="implicit",
+                confidence=0.6,
+                is_critical=True,
+                reasoning="Business statements often assume market rationality",
+                validation_methods=["Market research", "Economic data analysis"]
+            ))
+        
+        # Causal implicit assumptions
+        if "because" in statement.lower() or "leads to" in statement.lower():
+            assumptions.append(Assumption(
+                statement="Causal relationships are direct and measurable",
+                assumption_type="implicit",
+                confidence=0.7,
+                is_critical=True,
+                reasoning="Causal language assumes direct cause-effect relationships",
+                validation_methods=["Causal analysis", "Controlled experiments"]
+            ))
+        
+        # Temporal implicit assumptions
+        if any(word in statement.lower() for word in ["will", "future", "predict", "forecast"]):
+            assumptions.append(Assumption(
+                statement="Future conditions will remain similar to current conditions",
+                assumption_type="implicit",
+                confidence=0.5,
+                is_critical=True,
+                reasoning="Future-oriented statements assume continuity",
+                validation_methods=["Trend analysis", "Scenario planning"]
+            ))
+        
+        # Scale/scope implicit assumptions
+        if any(word in statement.lower() for word in ["all", "every", "always", "never"]):
+            assumptions.append(Assumption(
+                statement="Universal quantifiers apply without exceptions",
+                assumption_type="implicit",
+                confidence=0.4,
+                is_critical=True,
+                reasoning="Absolute statements assume no edge cases",
+                validation_methods=["Edge case analysis", "Exception testing"]
+            ))
+        
+        return assumptions
+    
+    def identify_critical_assumptions(self, assumptions: List[Assumption]) -> List[Assumption]:
+        """Identify which assumptions are load-bearing (critical to the argument)."""
+        critical_assumptions = []
+        
+        for assumption in assumptions:
+            # Mark as critical if it has high confidence and affects core logic
+            if assumption.confidence >= 0.7:
+                assumption.is_critical = True
+                critical_assumptions.append(assumption)
+            
+            # Mark causal assumptions as critical
+            if "causal" in assumption.reasoning.lower():
+                assumption.is_critical = True
+                critical_assumptions.append(assumption)
+                
+            # Mark universal assumptions as critical due to fragility
+            if "universal" in assumption.reasoning.lower() or "absolute" in assumption.reasoning.lower():
+                assumption.is_critical = True
+                critical_assumptions.append(assumption)
+        
+        return critical_assumptions
+    
+    def map_assumptions(
+        self,
+        statement: str,
+        depth: str = "surface"
+    ) -> Dict[str, Any]:
+        """
+        Map all assumptions in the given statement.
+        
+        Args:
+            statement: The statement to analyze
+            depth: Analysis depth - "surface" for basic, "deep" for comprehensive
+            
+        Returns analysis with categorized assumptions and criticality assessment.
+        """
+        
+        # Clear previous assumptions for new statement
+        self.assumptions.clear()
+        
+        # Extract different types of assumptions
+        explicit_assumptions = self.extract_explicit_assumptions(statement)
+        implicit_assumptions = self.identify_implicit_assumptions(statement)
+        
+        # Apply depth-specific analysis
+        if depth == "deep":
+            # In deep mode, generate additional implicit assumptions
+            additional_implicit = []
+            
+            # Look for data quality assumptions
+            if "data" in statement.lower() or "research" in statement.lower():
+                additional_implicit.append(Assumption(
+                    statement="Data sources are accurate and representative",
+                    assumption_type="implicit",
+                    confidence=0.6,
+                    is_critical=True,
+                    reasoning="Data-dependent statements assume source quality",
+                    validation_methods=["Data validation", "Source verification"]
+                ))
+            
+            # Look for stakeholder assumptions
+            if "people" in statement.lower() or "users" in statement.lower():
+                additional_implicit.append(Assumption(
+                    statement="Human behavior is predictable and consistent",
+                    assumption_type="implicit",
+                    confidence=0.5,
+                    is_critical=True,
+                    reasoning="People-focused statements assume behavioral predictability",
+                    validation_methods=["User research", "Behavioral analysis"]
+                ))
+                
+            implicit_assumptions.extend(additional_implicit)
+        
+        # Combine all assumptions
+        all_assumptions = explicit_assumptions + implicit_assumptions
+        self.assumptions = all_assumptions
+        
+        # Identify critical assumptions
+        critical_assumptions = self.identify_critical_assumptions(all_assumptions)
+        
+        # Build dependency relationships
+        dependency_graph = self._build_dependency_graph(all_assumptions)
+        
+        self.metadata["mapping_count"] += 1
+        self.metadata["last_mapped"] = datetime.now().isoformat()
+        
+        return {
+            "status": "success",
+            "statement": statement,
+            "depth": depth,
+            "assumptions_found": len(all_assumptions),
+            "explicit": [
+                {
+                    "statement": a.statement,
+                    "confidence": a.confidence,
+                    "is_critical": a.is_critical,
+                    "reasoning": a.reasoning,
+                    "validation_methods": a.validation_methods
+                }
+                for a in explicit_assumptions
+            ],
+            "implicit": [
+                {
+                    "statement": a.statement,
+                    "confidence": a.confidence,
+                    "is_critical": a.is_critical,
+                    "reasoning": a.reasoning,
+                    "validation_methods": a.validation_methods
+                }
+                for a in implicit_assumptions
+            ],
+            "critical": [
+                {
+                    "statement": a.statement,
+                    "type": a.assumption_type,
+                    "confidence": a.confidence,
+                    "reasoning": a.reasoning
+                }
+                for a in critical_assumptions
+            ],
+            "insights": {
+                "total_critical": len(critical_assumptions),
+                "highest_risk": min((a.confidence for a in critical_assumptions), default=1.0),
+                "dependency_complexity": len(dependency_graph),
+                "assumption_types": list(set(a.assumption_type for a in all_assumptions))
+            },
+            "graph": dependency_graph,
+            "metadata": self.metadata
+        }
+    
+    def _build_dependency_graph(self, assumptions: List[Assumption]) -> Dict[str, List[str]]:
+        """Build a simple dependency graph between assumptions."""
+        graph = {}
+        
+        for i, assumption in enumerate(assumptions):
+            assumption_id = f"assumption_{i}"
+            graph[assumption_id] = []
+            
+            # Simple heuristic: critical assumptions depend on less critical ones
+            for j, other_assumption in enumerate(assumptions):
+                if i != j and assumption.is_critical and not other_assumption.is_critical:
+                    graph[assumption_id].append(f"assumption_{j}")
+        
+        return graph
+
+
+# Global instance for simple usage
+_assumption_mapper = AssumptionMapper()
+
+
 # Global instance for simple usage
 _chain_processor = ChainOfThought()
 
@@ -399,6 +666,15 @@ def generate_hypotheses_handler(**kwargs) -> str:
     """Handler function for the generate_hypotheses tool."""
     try:
         result = _hypothesis_generator.generate_hypotheses(**kwargs)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"status": "error", "message": str(e)}, indent=2)
+
+
+def map_assumptions_handler(**kwargs) -> str:
+    """Handler function for the map_assumptions tool."""
+    try:
+        result = _assumption_mapper.map_assumptions(**kwargs)
         return json.dumps(result, indent=2)
     except Exception as e:
         return json.dumps({"status": "error", "message": str(e)}, indent=2)

@@ -22,6 +22,7 @@ from .core import (
     get_chain_summary_handler, 
     clear_chain_handler,
     generate_hypotheses_handler,
+    map_assumptions_handler,
     ChainOfThought,
     ThreadAwareChainOfThought,
     StopReasonHandler,
@@ -145,6 +146,30 @@ TOOL_SPECS = [
                 }
             }
         }
+    },
+    {
+        "toolSpec": {
+            "name": "map_assumptions",
+            "description": "Surface and validate hidden assumptions in statements. Identifies explicit and implicit assumptions with criticality assessment and dependency mapping.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "statement": {
+                            "type": "string",
+                            "description": "The statement or claim to analyze for assumptions"
+                        },
+                        "depth": {
+                            "type": "string",
+                            "enum": ["surface", "deep"],
+                            "default": "surface",
+                            "description": "Analysis depth - 'surface' for basic patterns, 'deep' for comprehensive analysis"
+                        }
+                    },
+                    "required": ["statement"]
+                }
+            }
+        }
     }
 ]
 
@@ -153,7 +178,8 @@ HANDLERS = {
     "chain_of_thought_step": chain_of_thought_step_handler,
     "get_chain_summary": get_chain_summary_handler,
     "clear_chain": clear_chain_handler,
-    "generate_hypotheses": generate_hypotheses_handler
+    "generate_hypotheses": generate_hypotheses_handler,
+    "map_assumptions": map_assumptions_handler
 }
 
 # Convenience exports
@@ -168,7 +194,8 @@ __all__ = [
     "chain_of_thought_step_handler",
     "get_chain_summary_handler",
     "clear_chain_handler",
-    "generate_hypotheses_handler"
+    "generate_hypotheses_handler",
+    "map_assumptions_handler"
 ]
 
 # Version info
