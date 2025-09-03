@@ -195,15 +195,17 @@ class TestChainOfThought:
         assert "Conclusion" in summary["stages_covered"]
         
         # Check confidence calculations
-        assert summary["overall_confidence"] == 0.8125  # Average of 0.9, 0.7, 0.8, 0.85
+        assert summary["overall_confidence"] == 0.812  # Average of 0.9, 0.7, 0.8, 0.85 rounded to 3 decimal places
         assert "Problem Definition" in summary["confidence_by_stage"]
         
         # Check insights
         insights = summary["insights"]
         assert "Requirement doc" in insights["total_evidence"]
         assert "Market stability" in insights["total_assumptions"]
-        assert 1 in insights["high_confidence_steps"]  # confidence >= 0.8
-        assert 2 in insights["low_confidence_steps"]   # confidence < 0.5 (none in this case)
+        assert 1 in insights["high_confidence_steps"]  # confidence >= 0.8 (0.9)
+        assert 3 in insights["high_confidence_steps"]  # confidence >= 0.8 (0.8)
+        assert 4 in insights["high_confidence_steps"]  # confidence >= 0.8 (0.85)
+        assert len(insights["low_confidence_steps"]) == 0  # No steps with confidence < 0.5
     
     def test_generate_summary_with_contradictions(self):
         """Test summary generation with step contradictions."""
