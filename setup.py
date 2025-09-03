@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="chain-of-thought-tool",
-    version="0.1.0",
+    version="0.1.1",
     author="Code Developer", 
     author_email="code-developer@democratize.technology",
     description="A lightweight Chain of Thought reasoning tool for LLM function calling",
