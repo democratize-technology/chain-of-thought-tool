@@ -68,24 +68,24 @@ class ChainOfThought:
         Returns analysis and feedback for the step.
         """
         
-        # Validate step number
-        if step_number != len(self.steps) + 1 and step_number not in [s.step_number for s in self.steps]:
-            # Allow for revision of existing steps
-            for i, step in enumerate(self.steps):
-                if step.step_number == step_number:
-                    self.steps[i] = ThoughtStep(
-                        thought=thought,
-                        step_number=step_number,
-                        total_steps=total_steps,
-                        reasoning_stage=reasoning_stage,
-                        confidence=confidence,
-                        next_step_needed=next_step_needed,
-                        dependencies=dependencies,
-                        contradicts=contradicts,
-                        evidence=evidence,
-                        assumptions=assumptions
-                    )
-                    return self._generate_feedback(self.steps[i], is_revision=True)
+        # Check if this is a revision of an existing step
+        for i, step in enumerate(self.steps):
+            if step.step_number == step_number:
+                # This is a revision
+                self.steps[i] = ThoughtStep(
+                    thought=thought,
+                    step_number=step_number,
+                    total_steps=total_steps,
+                    reasoning_stage=reasoning_stage,
+                    confidence=confidence,
+                    next_step_needed=next_step_needed,
+                    dependencies=dependencies,
+                    contradicts=contradicts,
+                    evidence=evidence,
+                    assumptions=assumptions
+                )
+                self._update_metadata()
+                return self._generate_feedback(self.steps[i], is_revision=True)
         
         step = ThoughtStep(
             thought=thought,
