@@ -82,12 +82,19 @@ class ParameterValidator:
             The sanitized and validated thought text
 
         Raises:
-            TypeError: If thought is not a string
-            ValueError: If thought is empty or exceeds length limits
+            ValueError: If thought is empty, None, or exceeds length limits
         """
+        # Handle None as special case for better error handling
+        if thought is None:
+            raise ValueError("thought must be a string")
+
         # Type validation with strict isinstance check
         if not isinstance(thought, str):
-            raise TypeError(f"thought must be a string, got {type(thought).__name__}")
+            raise ValueError("thought must be a string")
+
+        # Handle empty string
+        if not thought:
+            raise ValueError("thought cannot be empty")
 
         # Handle edge cases that could bypass length checks - allow empty strings for edge case testing
         if thought.isspace():
@@ -128,8 +135,9 @@ class ParameterValidator:
             if confidence in (float('inf'), float('-inf')):
                 raise ValueError("confidence must be between -100.0 and 100.0")
 
-        # Range validation - allow any real number for edge case testing
-        # Only reject NaN and infinite values which are handled above
+        # Range validation - confidence must be between -100.0 and 100.0
+        if confidence < -100.0 or confidence > 100.0:
+            raise ValueError("confidence must be between -100.0 and 100.0")
 
         # Return as float for consistency
         return float(confidence)
@@ -150,7 +158,7 @@ class ParameterValidator:
         """
         # Type validation with strict isinstance check
         if not isinstance(dependencies, list):
-            raise TypeError(f"dependencies must be a list, got {type(dependencies).__name__}")
+            raise ValueError("dependencies must be a list")
 
         # Resource limit validation - check list size before individual items
         if len(dependencies) > 50:  # Max items limit for security
@@ -171,12 +179,13 @@ class ParameterValidator:
 
         return validated_deps
 
-    def validate_step_number(self, step_number: int) -> int:
+    def validate_step_number(self, step_number: int, param_name: str = "step_number") -> int:
         """
         Validate the step number parameter with bounds checking.
 
         Args:
             step_number: The step number to validate
+            param_name: Name of the parameter for error messages
 
         Returns:
             The validated step number
@@ -187,11 +196,11 @@ class ParameterValidator:
         """
         # Type validation
         if not isinstance(step_number, int):
-            raise TypeError(f"step_number must be an integer, got {type(step_number).__name__}")
+            raise ValueError(f"{param_name} must be an integer")
 
         # Bounds validation to prevent resource exhaustion
         if step_number < 1 or step_number > 1000:
-            raise ValueError("step_number must be between 1 and 1000")
+            raise ValueError(f"{param_name} must be between 1 and 1000")
 
         return step_number
 
@@ -245,7 +254,7 @@ class ParameterValidator:
 
         # Resource limit validation
         if len(items) > max_items:
-            raise ValueError(f"{param_name} cannot exceed {max_items} items")
+            raise ValueError(f"{param_name} list cannot exceed {max_items} items")
 
         validated_items = []
         for i, item in enumerate(items):
@@ -306,8 +315,8 @@ class ParameterValidator:
         """
         # Validate required parameters using existing methods
         validated_thought = self.validate_thought_param(thought)
-        validated_step_number = self.validate_step_number(step_number)
-        validated_total_steps = self.validate_step_number(total_steps)  # Reuse step validation
+        validated_step_number = self.validate_step_number(step_number, "step_number")
+        validated_total_steps = self.validate_step_number(total_steps, "total_steps")  # Reuse step validation
         validated_confidence = self.validate_confidence_param(confidence)
         validated_reasoning_stage = self._validate_reasoning_stage(reasoning_stage)
         validated_next_step_needed = self._validate_boolean_param(next_step_needed, "next_step_needed")
@@ -346,7 +355,7 @@ class ParameterValidator:
 
         Raises:
             TypeError: If reasoning_stage is not a string
-            ValueError: If reasoning_stage is empty or contains invalid characters
+            ValueError: If reasoning_stage is empty, too long, or contains invalid characters
         """
         if not isinstance(reasoning_stage, str):
             raise TypeError(f"reasoning_stage must be a string, got {type(reasoning_stage).__name__}")
@@ -356,6 +365,10 @@ class ParameterValidator:
 
         if not sanitized_stage or sanitized_stage.isspace():
             raise ValueError("reasoning_stage cannot be empty or whitespace only")
+
+        # Check length limit (100 characters for security)
+        if len(sanitized_stage) > 100:
+            raise ValueError("reasoning_stage cannot exceed 100 characters")
 
         # Allow only alphanumeric, spaces, and basic punctuation
         if not re.match(r'^[a-zA-Z0-9\s\-_,.]+$', sanitized_stage):
@@ -378,7 +391,7 @@ class ParameterValidator:
             TypeError: If value is not a boolean
         """
         if not isinstance(value, bool):
-            raise TypeError(f"{param_name} must be a boolean, got {type(value).__name__}")
+            raise ValueError(f"{param_name} must be a boolean")
 
         return value
 
@@ -453,7 +466,172 @@ class ParameterValidator:
             ValueError: If step relationships are invalid
         """
         if step_number > total_steps:
-            raise ValueError(f"step_number ({step_number}) cannot be greater than total_steps ({total_steps})")
+            raise ValueError("step_number cannot exceed total_steps")
+
+    def validate_reasoning_stage_param(self, reasoning_stage: str) -> str:
+        """
+        Validate and sanitize the reasoning_stage parameter.
+
+        This is a public method for external validation.
+
+        Args:
+            reasoning_stage: The reasoning stage to validate
+
+        Returns:
+            The validated reasoning stage
+
+        Raises:
+            TypeError: If reasoning_stage is not a string
+            ValueError: If reasoning_stage is empty or contains invalid characters
+        """
+        return self._validate_reasoning_stage(reasoning_stage)
+
+    def validate_step_parameters(self, step_number: Union[int, float, str, bool], total_steps: int) -> int:
+        """
+        Validate step number parameter with enhanced type checking.
+
+        Args:
+            step_number: The step number to validate
+            total_steps: The total number of steps
+
+        Returns:
+            The validated step number
+
+        Raises:
+            ValueError: If step_number or total_steps is not a valid positive integer
+        """
+        # Reject boolean values (they are instances of int in Python)
+        if isinstance(step_number, bool):
+            raise ValueError("step_number must be a positive integer, not a boolean")
+
+        # Reject all float values for strict type safety
+        if isinstance(step_number, float):
+            raise ValueError("step_number must be a positive integer, not a float")
+
+        # Type validation - must be integer only
+        if not isinstance(step_number, int):
+            raise ValueError("step_number must be a positive integer")
+
+        # Validate step_number with specific error message first (priority)
+        if step_number < 1 or step_number > 1000:
+            raise ValueError("step_number must be between 1 and 1000")
+
+        # Validate total_steps with specific error message
+        if not isinstance(total_steps, int):
+            raise ValueError("total_steps must be an integer")
+        if total_steps < 1 or total_steps > 1000:
+            raise ValueError("total_steps must be between 1 and 1000")
+
+        # Validate relationship between step_number and total_steps
+        self._validate_step_relationships(step_number, total_steps)
+
+        return step_number
+
+    def validate_length_limit(self, text: str, max_length: int, param_name: str = "text") -> str:
+        """
+        Validate text length limit.
+
+        Args:
+            text: Text to validate
+            max_length: Maximum allowed length
+            param_name: Parameter name for error messages
+
+        Returns:
+            Validated text
+
+        Raises:
+            ValueError: If text exceeds length limit
+        """
+        if not isinstance(text, str):
+            raise ValueError(f"{param_name} must be a string")
+
+        if len(text) > max_length:
+            raise ValueError(f"{param_name} cannot exceed {max_length:,} characters")
+
+        return text
+
+    def validate_type(self, value: Any, expected_type: type, param_name: str = "value") -> Any:
+        """
+        Validate parameter type.
+
+        Args:
+            value: Value to validate
+            expected_type: Expected type
+            param_name: Parameter name for error messages
+
+        Returns:
+            Validated value
+
+        Raises:
+            ValueError: If value has wrong type
+        """
+        if not isinstance(value, expected_type):
+            raise ValueError(f"{param_name} must be a {expected_type.__name__}, got {type(value).__name__}")
+
+        return value
+
+    def validate_boolean_param(self, value: Any, param_name: str = "parameter") -> bool:
+        """
+        Validate boolean parameter with strict type checking.
+
+        Args:
+            value: Value to validate
+            param_name: Parameter name for error messages
+
+        Returns:
+            Validated boolean value
+
+        Raises:
+            ValueError: If value is not a boolean
+        """
+        if not isinstance(value, bool):
+            raise ValueError(f"{param_name} must be a boolean, got {type(value).__name__}")
+
+        return value
+
+    def validate_integer_list_param(self, items: List[Any], param_name: str = "parameter",
+                                   max_items: int = 50, min_value: int = 1, max_value: int = 1000) -> List[int]:
+        """
+        Validate integer list parameter with comprehensive security.
+
+        Args:
+            items: List of items to validate
+            param_name: Parameter name for error messages
+            max_items: Maximum number of items allowed
+            min_value: Minimum allowed integer value
+            max_value: Maximum allowed integer value
+
+        Returns:
+            List of validated integers
+
+        Raises:
+            ValueError: If items contain invalid values or exceed limits
+        """
+        # Type validation
+        if not isinstance(items, list):
+            raise ValueError(f"{param_name} must be a list, got {type(items).__name__}")
+
+        # Resource limit validation
+        if len(items) > max_items:
+            raise ValueError(f"{param_name} list cannot exceed {max_items} items")
+
+        validated_items = []
+        for i, item in enumerate(items):
+            # Reject boolean values (they are instances of int in Python)
+            if isinstance(item, bool):
+                raise ValueError(f"{param_name}[{i}] must be an integer, not a boolean")
+
+            # Reject non-integer types
+            if not isinstance(item, int):
+                raise ValueError(f"{param_name}[{i}] must be an integer, got {type(item).__name__}")
+
+            # Range validation
+            if item < min_value or item > max_value:
+                raise ValueError(f"{param_name}[{i}] must be between {min_value} and {max_value}")
+
+            validated_items.append(item)
+
+        return validated_items
 
 
 class ChainOfThought:
