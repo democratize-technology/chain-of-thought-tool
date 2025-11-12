@@ -1029,35 +1029,40 @@ class BedrockStopReasonHandler(StopReasonHandler):
                 "clear_chain": clear_chain_handler
             }
     
-    def _create_chain_step_handler(self):
-        """Create a chain step handler bound to this instance's chain."""
+    def _create_handler_factory(self, method_name: str, takes_kwargs: bool = False):
+        """
+        Create a generic handler factory for any method on this instance's chain.
+
+        Args:
+            method_name: Name of the method to call on self.chain
+            takes_kwargs: Whether the method accepts keyword arguments
+
+        Returns:
+            A handler function bound to this instance's chain
+        """
         def handler(**kwargs):
             try:
-                result = self.chain.add_step(**kwargs)
+                method = getattr(self.chain, method_name)
+                if takes_kwargs:
+                    result = method(**kwargs)
+                else:
+                    result = method()
                 return _safe_json_dumps(result, indent=2)
             except Exception as e:
                 return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
         return handler
-    
+
+    def _create_chain_step_handler(self):
+        """Create a chain step handler bound to this instance's chain."""
+        return self._create_handler_factory("add_step", takes_kwargs=True)
+
     def _create_summary_handler(self):
         """Create a summary handler bound to this instance's chain."""
-        def handler():
-            try:
-                result = self.chain.generate_summary()
-                return _safe_json_dumps(result, indent=2)
-            except Exception as e:
-                return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
-        return handler
-    
+        return self._create_handler_factory("generate_summary", takes_kwargs=False)
+
     def _create_clear_handler(self):
         """Create a clear handler bound to this instance's chain."""
-        def handler():
-            try:
-                result = self.chain.clear_chain()
-                return _safe_json_dumps(result, indent=2)
-            except Exception as e:
-                return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
-        return handler
+        return self._create_handler_factory("clear_chain", takes_kwargs=False)
     
     async def should_continue_reasoning(self, chain: ChainOfThought) -> bool:
         """Check if CoT indicates more steps needed."""
