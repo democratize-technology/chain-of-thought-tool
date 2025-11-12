@@ -176,6 +176,65 @@ class ChainOfThought:
         }
         self.validator = ParameterValidator()
       
+    def _validate_and_extract_params(
+        self,
+        thought: str,
+        step_number: int,
+        total_steps: int,
+        next_step_needed: bool,
+        reasoning_stage: str = "Analysis",
+        confidence: float = 0.8,
+        dependencies: Optional[List[int]] = None,
+        contradicts: Optional[List[int]] = None,
+        evidence: Optional[List[str]] = None,
+        assumptions: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Validate and extract input parameters for chain step."""
+        return self.validator.validate_input(
+            thought=thought,
+            step_number=step_number,
+            total_steps=total_steps,
+            next_step_needed=next_step_needed,
+            reasoning_stage=reasoning_stage,
+            confidence=confidence,
+            dependencies=dependencies,
+            contradicts=contradicts,
+            evidence=evidence,
+            assumptions=assumptions
+        )
+
+    def _create_thought_step(self, validated_params: Dict[str, Any]) -> ThoughtStep:
+        """Create a ThoughtStep instance from validated parameters."""
+        return ThoughtStep(
+            thought=validated_params["thought"],
+            step_number=validated_params["step_number"],
+            total_steps=validated_params["total_steps"],
+            reasoning_stage=validated_params["reasoning_stage"],
+            confidence=validated_params["confidence"],
+            next_step_needed=validated_params["next_step_needed"],
+            dependencies=validated_params["dependencies"],
+            contradicts=validated_params["contradicts"],
+            evidence=validated_params["evidence"],
+            assumptions=validated_params["assumptions"]
+        )
+
+    def _handle_step_revision(self, step_number: int, validated_params: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle revision of an existing step."""
+        for i, step in enumerate(self.steps):
+            if step.step_number == step_number:
+                # This is a revision
+                self.steps[i] = self._create_thought_step(validated_params)
+                self._update_metadata()
+                return self._generate_feedback(self.steps[i], is_revision=True)
+        return None
+
+    def _handle_new_step(self, validated_params: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle creation of a new step."""
+        step = self._create_thought_step(validated_params)
+        self.steps.append(step)
+        self._update_metadata()
+        return self._generate_feedback(step, is_revision=False)
+
     def add_step(
         self,
         thought: str,
@@ -194,69 +253,21 @@ class ChainOfThought:
 
         Returns analysis and feedback for the step.
         """
-
-        # Validate and sanitize all input parameters for security
-        validated_params = self.validator.validate_input(
-            thought=thought,
-            step_number=step_number,
-            total_steps=total_steps,
-            next_step_needed=next_step_needed,
-            reasoning_stage=reasoning_stage,
-            confidence=confidence,
-            dependencies=dependencies,
-            contradicts=contradicts,
-            evidence=evidence,
-            assumptions=assumptions
+        validated_params = self._validate_and_extract_params(
+            thought, step_number, total_steps, next_step_needed,
+            reasoning_stage, confidence, dependencies, contradicts,
+            evidence, assumptions
         )
 
-        # Extract validated parameters
-        thought = validated_params["thought"]
-        step_number = validated_params["step_number"]
-        total_steps = validated_params["total_steps"]
-        reasoning_stage = validated_params["reasoning_stage"]
-        confidence = validated_params["confidence"]
-        next_step_needed = validated_params["next_step_needed"]
-        dependencies = validated_params["dependencies"]
-        contradicts = validated_params["contradicts"]
-        evidence = validated_params["evidence"]
-        assumptions = validated_params["assumptions"]
-        
         # Check if this is a revision of an existing step
-        for i, step in enumerate(self.steps):
-            if step.step_number == step_number:
-                # This is a revision
-                self.steps[i] = ThoughtStep(
-                    thought=thought,
-                    step_number=step_number,
-                    total_steps=total_steps,
-                    reasoning_stage=reasoning_stage,
-                    confidence=confidence,
-                    next_step_needed=next_step_needed,
-                    dependencies=dependencies,
-                    contradicts=contradicts,
-                    evidence=evidence,
-                    assumptions=assumptions
-                )
-                self._update_metadata()
-                return self._generate_feedback(self.steps[i], is_revision=True)
-        
-        step = ThoughtStep(
-            thought=thought,
-            step_number=step_number,
-            total_steps=total_steps,
-            reasoning_stage=reasoning_stage,
-            confidence=confidence,
-            next_step_needed=next_step_needed,
-            dependencies=dependencies,
-            contradicts=contradicts,
-            evidence=evidence,
-            assumptions=assumptions
+        revision_result = self._handle_step_revision(
+            validated_params["step_number"], validated_params
         )
-        
-        self.steps.append(step)
-        self._update_metadata()
-        
-        return self._generate_feedback(step, is_revision=False)
+        if revision_result:
+            return revision_result
+
+        # Handle new step
+        return self._handle_new_step(validated_params)
     
     def _generate_feedback(self, step: ThoughtStep, is_revision: bool) -> Dict[str, Any]:
         """Generate feedback and guidance for the thought step."""
@@ -900,69 +911,57 @@ class ConfidenceCalibrator:
         
         return round(adjusted_confidence, 3)
     
-    def calibrate_confidence(
-        self,
-        prediction: str,
-        initial_confidence: float,
-        context: str = ""
-    ) -> Dict[str, Any]:
-        """
-        Calibrate confidence for the given prediction.
-        
-        Args:
-            prediction: The prediction or claim to calibrate
-            initial_confidence: Initial confidence level (0.0-1.0)
-            context: Optional additional context for calibration
-            
-        Returns calibrated confidence with uncertainty bands and reasoning.
-        """
-        
-        # Validate inputs
-        initial_confidence = max(0.0, min(1.0, initial_confidence))
-        
-        # Detect overconfidence patterns
-        overconfidence_analysis = self.detect_overconfidence_patterns(prediction, initial_confidence)
-        
-        # Apply calibration adjustment
-        calibrated_confidence = self.apply_calibration_adjustment(
-            initial_confidence, 
-            overconfidence_analysis["overconfidence_score"]
-        )
-        
-        # Calculate uncertainty bands
-        uncertainty_band = self.calculate_uncertainty_bands(calibrated_confidence)
-        
-        # Identify uncertainty factors
+    def _identify_uncertainty_factors(self, prediction: str, context: str) -> List[str]:
+        """Identify uncertainty factors based on prediction and context."""
         uncertainty_factors = []
-        
-        # Add context-specific uncertainty factors
+
+        # Temporal uncertainty
         if "future" in prediction.lower() or any(word in prediction.lower() for word in ["will", "going to", "by 20"]):
             uncertainty_factors.append("Temporal uncertainty - future events")
-        
+
+        # Technology uncertainty
         if "technology" in prediction.lower() or "ai" in prediction.lower():
             uncertainty_factors.append("Technology uncertainty - rapid change domain")
-        
+
+        # Complexity uncertainty
         if len(prediction.split()) > 20:
             uncertainty_factors.append("Complexity uncertainty - multiple interconnected factors")
-        
+
+        # Data uncertainty
         if context and "limited data" in context.lower():
             uncertainty_factors.append("Data uncertainty - limited information available")
-        
-        # Generate calibration reasoning
-        adjustment_magnitude = abs(calibrated_confidence - initial_confidence)
-        
+
+        return uncertainty_factors
+
+    def _generate_calibration_reasoning(
+        self,
+        adjustment_magnitude: float,
+        risk_level: str
+    ) -> str:
+        """Generate reasoning text for confidence calibration."""
         if adjustment_magnitude > 0.15:
             reasoning = f"Significant confidence reduction ({adjustment_magnitude:.2f}) due to strong overconfidence indicators."
         elif adjustment_magnitude > 0.05:
             reasoning = f"Moderate confidence adjustment ({adjustment_magnitude:.2f}) due to uncertainty factors."
         else:
             reasoning = f"Minor confidence adjustment ({adjustment_magnitude:.2f}) - original estimate reasonably calibrated."
-        
-        if overconfidence_analysis["risk_level"] == "high":
+
+        if risk_level == "high":
             reasoning += " High overconfidence risk detected."
-        
-        # Create assessment
-        assessment = ConfidenceAssessment(
+
+        return reasoning
+
+    def _create_confidence_assessment(
+        self,
+        initial_confidence: float,
+        calibrated_confidence: float,
+        uncertainty_band: tuple,
+        overconfidence_analysis: Dict[str, Any],
+        reasoning: str,
+        uncertainty_factors: List[str]
+    ) -> ConfidenceAssessment:
+        """Create a ConfidenceAssessment instance."""
+        return ConfidenceAssessment(
             original_confidence=initial_confidence,
             calibrated_confidence=calibrated_confidence,
             confidence_band=uncertainty_band,
@@ -970,11 +969,20 @@ class ConfidenceCalibrator:
             calibration_reasoning=reasoning,
             uncertainty_factors=uncertainty_factors
         )
-        
-        self.assessments.append(assessment)
-        self.metadata["calibration_count"] += 1
-        self.metadata["last_calibrated"] = datetime.now().isoformat()
-        
+
+    def _build_calibration_response(
+        self,
+        prediction: str,
+        initial_confidence: float,
+        calibrated_confidence: float,
+        uncertainty_band: tuple,
+        overconfidence_analysis: Dict[str, Any],
+        uncertainty_factors: List[str],
+        reasoning: str
+    ) -> Dict[str, Any]:
+        """Build the calibration response dictionary."""
+        adjustment_magnitude = abs(calibrated_confidence - initial_confidence)
+
         return {
             "status": "success",
             "prediction": prediction,
@@ -1003,6 +1011,62 @@ class ConfidenceCalibrator:
             },
             "metadata": self.metadata
         }
+
+    def calibrate_confidence(
+        self,
+        prediction: str,
+        initial_confidence: float,
+        context: str = ""
+    ) -> Dict[str, Any]:
+        """
+        Calibrate confidence for the given prediction.
+
+        Args:
+            prediction: The prediction or claim to calibrate
+            initial_confidence: Initial confidence level (0.0-1.0)
+            context: Optional additional context for calibration
+
+        Returns calibrated confidence with uncertainty bands and reasoning.
+        """
+        # Validate inputs
+        initial_confidence = max(0.0, min(1.0, initial_confidence))
+
+        # Analyze overconfidence patterns
+        overconfidence_analysis = self.detect_overconfidence_patterns(prediction, initial_confidence)
+
+        # Apply calibration adjustment
+        calibrated_confidence = self.apply_calibration_adjustment(
+            initial_confidence,
+            overconfidence_analysis["overconfidence_score"]
+        )
+
+        # Calculate uncertainty bands
+        uncertainty_band = self.calculate_uncertainty_bands(calibrated_confidence)
+
+        # Identify uncertainty factors
+        uncertainty_factors = self._identify_uncertainty_factors(prediction, context)
+
+        # Generate reasoning
+        adjustment_magnitude = abs(calibrated_confidence - initial_confidence)
+        reasoning = self._generate_calibration_reasoning(
+            adjustment_magnitude, overconfidence_analysis["risk_level"]
+        )
+
+        # Create assessment and update metadata
+        assessment = self._create_confidence_assessment(
+            initial_confidence, calibrated_confidence, uncertainty_band,
+            overconfidence_analysis, reasoning, uncertainty_factors
+        )
+
+        self.assessments.append(assessment)
+        self.metadata["calibration_count"] += 1
+        self.metadata["last_calibrated"] = datetime.now().isoformat()
+
+        # Build and return response
+        return self._build_calibration_response(
+            prediction, initial_confidence, calibrated_confidence,
+            uncertainty_band, overconfidence_analysis, uncertainty_factors, reasoning
+        )
 
 
 
