@@ -92,13 +92,11 @@ class ParameterValidator:
         if not isinstance(thought, str):
             raise ValueError("thought must be a string")
 
-        # Handle empty string
-        if not thought:
-            raise ValueError("thought cannot be empty")
-
-        # Handle edge cases that could bypass length checks - allow empty strings for edge case testing
+        # Handle edge cases that could bypass length checks
+        # Allow empty strings for backward compatibility and edge case testing
+        # Trim whitespace-only strings to empty for compatibility
         if thought.isspace():
-            raise ValueError("thought cannot be whitespace only")
+            thought = ""
 
         # Sanitize unicode characters to prevent bypass attacks
         thought = self._sanitize_unicode_string(thought)
@@ -169,11 +167,11 @@ class ParameterValidator:
         for dep in dependencies:
             # Type validation for each item
             if not isinstance(dep, int):
-                raise TypeError(f"each dependency must be an integer, got {type(dep).__name__}")
+                raise ValueError("dependencies values must be integers")
 
             # Range validation with bounds to prevent resource exhaustion
             if dep < 1 or dep > 1000:  # Reasonable bounds for step numbers
-                raise ValueError("dependencies must be positive integers between 1 and 1000")
+                raise ValueError("dependencies values must be integers between 1 and 1000")
 
             validated_deps.append(dep)
 
@@ -250,7 +248,7 @@ class ParameterValidator:
         """
         # Type validation with strict isinstance check
         if not isinstance(items, list):
-            raise TypeError(f"{param_name} must be a list, got {type(items).__name__}")
+            raise ValueError(f"{param_name} must be a list")
 
         # Resource limit validation
         if len(items) > max_items:
@@ -260,7 +258,7 @@ class ParameterValidator:
         for i, item in enumerate(items):
             # Individual item validation
             if not isinstance(item, str):
-                raise TypeError(f"{param_name}[{i}] must be a string, got {type(item).__name__}")
+                raise ValueError(f"{param_name} items must be strings")
 
             # Unicode sanitization
             sanitized_item = self._sanitize_unicode_string(item)
@@ -358,7 +356,7 @@ class ParameterValidator:
             ValueError: If reasoning_stage is empty, too long, or contains invalid characters
         """
         if not isinstance(reasoning_stage, str):
-            raise TypeError(f"reasoning_stage must be a string, got {type(reasoning_stage).__name__}")
+            raise ValueError("reasoning_stage must be a string")
 
         # Sanitize the input
         sanitized_stage = self._sanitize_unicode_string(reasoning_stage)
@@ -370,9 +368,13 @@ class ParameterValidator:
         if len(sanitized_stage) > 100:
             raise ValueError("reasoning_stage cannot exceed 100 characters")
 
-        # Allow only alphanumeric, spaces, and basic punctuation
-        if not re.match(r'^[a-zA-Z0-9\s\-_,.]+$', sanitized_stage):
-            raise ValueError("reasoning_stage can only contain letters, numbers, spaces, hyphens, underscores, commas, and periods")
+        # Explicitly reject control characters that might survive sanitization
+        if any(ord(c) < 32 and c != ' ' for c in sanitized_stage):
+            raise ValueError("reasoning_stage can only contain letters, numbers, spaces, underscores, and hyphens")
+
+        # Allow only alphanumeric, spaces, underscores, and hyphens
+        if not re.match(r'^[a-zA-Z0-9 \-_]+$', sanitized_stage):
+            raise ValueError("reasoning_stage can only contain letters, numbers, spaces, underscores, and hyphens")
 
         return html.escape(sanitized_stage.strip())
 
