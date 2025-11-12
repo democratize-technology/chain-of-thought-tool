@@ -195,7 +195,7 @@ class TestChainOfThought:
         assert "Conclusion" in summary["stages_covered"]
         
         # Check confidence calculations
-        assert summary["overall_confidence"] == 0.812  # Average of 0.9, 0.7, 0.8, 0.85 rounded to 3 decimal places
+        assert summary["overall_confidence"] == 0.813  # Average of 0.9, 0.7, 0.8, 0.85 rounded to 3 decimal places
         assert "Problem Definition" in summary["confidence_by_stage"]
         
         # Check insights

@@ -340,13 +340,13 @@ class TestInputValidationSecurity:
         with pytest.raises(ValueError, match="dependencies must be a list"):
             self.cot.add_step("test", 1, 1, False, dependencies="not_list")
         
-        with pytest.raises(ValueError, match="dependency values must be integers"):
+        with pytest.raises(ValueError, match="dependencies values must be integers"):
             self.cot.add_step("test", 1, 1, False, dependencies=["not_int"])
         
-        with pytest.raises(ValueError, match="dependency values must be integers between -10000 and 10000000"):
+        with pytest.raises(ValueError, match="dependencies values must be integers between -10000 and 10000000"):
             self.cot.add_step("test", 1, 1, False, dependencies=[-10001])
         
-        with pytest.raises(ValueError, match="dependency values must be integers between -10000 and 10000000"):
+        with pytest.raises(ValueError, match="dependencies values must be integers between -10000 and 10000000"):
             self.cot.add_step("test", 1, 1, False, dependencies=[10000001])
         
         # Test invalid evidence type
