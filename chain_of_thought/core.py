@@ -36,6 +36,102 @@ MEDIUM_CONFIDENCE_THRESHOLD = 0.05
 MAX_PREDICTION_WORDS = 20
 
 
+# =============================================================================
+# HANDLER FACTORY CONFIGURATION - Task #5 Generic Handler Factory
+# =============================================================================
+
+# Configuration for tool handlers that the generic factory can create
+TOOL_HANDLERS_CONFIG = {
+    'chain_of_thought_step': {
+        'service_name': 'chain_of_thought',
+        'service_method': 'add_step'
+    },
+    'get_chain_summary': {
+        'service_name': 'chain_of_thought',
+        'service_method': 'generate_summary'
+    },
+    'clear_chain': {
+        'service_name': 'chain_of_thought',
+        'service_method': 'clear_chain'
+    },
+    'generate_hypotheses': {
+        'service_name': 'hypothesis_generator',
+        'service_method': 'generate_hypotheses'
+    },
+    'map_assumptions': {
+        'service_name': 'assumption_mapper',
+        'service_method': 'map_assumptions'
+    },
+    'calibrate_confidence': {
+        'service_name': 'confidence_calibrator',
+        'service_method': 'calibrate_confidence'
+    }
+}
+
+
+def create_generic_handler(
+    tool_name: str,
+    registry: Optional['ServiceRegistry'] = None,
+    rate_limiter: Optional['RateLimiter'] = None,
+    client_id: str = "default"
+) -> Callable:
+    """
+    Create a generic handler function for any configured tool.
+
+    This function replaces the individual create_*_handler functions with
+    a single configurable implementation that reduces code duplication.
+
+    Args:
+        tool_name: Name of the tool to create a handler for
+        registry: Service registry to use. If None, uses default global registry.
+        rate_limiter: Rate limiter to use. If None, uses global rate limiter.
+        client_id: Client identifier for rate limiting.
+
+    Returns:
+        Handler function that handles rate limiting and service calls
+
+    Raises:
+        ValueError: If tool_name is not configured
+    """
+    if tool_name not in TOOL_HANDLERS_CONFIG:
+        raise ValueError(f"Unknown tool '{tool_name}'. Available tools: {list(TOOL_HANDLERS_CONFIG.keys())}")
+
+    config = TOOL_HANDLERS_CONFIG[tool_name]
+    service_name = config['service_name']
+    service_method = config['service_method']
+
+    # Use provided rate limiter or global one
+    limiter = rate_limiter or get_global_rate_limiter()
+
+    def handler(**kwargs) -> str:
+        """Generic handler function with rate limiting and service injection."""
+
+        # Check rate limit first
+        if not limiter.check_rate_limit(client_id):
+            retry_after = limiter.get_retry_after(client_id)
+            return _safe_json_dumps({
+                "status": "error",
+                "message": f"Rate limit exceeded. Retry after {retry_after or 60} seconds.",
+                "error_type": "rate_limit_exceeded",
+                "retry_after": retry_after
+            }, indent=2)
+
+        try:
+            service_registry = registry or get_service_registry()
+            service = service_registry.get_service(service_name)
+
+            # Call the service method with the provided kwargs
+            method = getattr(service, service_method)
+            result = method(**kwargs)
+
+            return _safe_json_dumps(result, indent=2)
+
+        except Exception as e:
+            return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+
+    return handler
+
+
 class ServiceCreationError(Exception):
     """Raised when service creation fails in ServiceRegistry."""
     pass
@@ -1416,215 +1512,39 @@ _confidence_calibrator = _default_registry.get_service('confidence_calibrator')
 from .security import RequestValidator, SecurityValidationError, default_validator
 
 
+# =============================================================================
+# BACKWARD COMPATIBILITY WRAPPERS - Task #5 Generic Handler Factory
+# =============================================================================
+
+# Thin wrapper functions around the generic factory for backward compatibility
 def create_chain_of_thought_step_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
-    """
-    Create a chain_of_thought_step handler with dependency injection and rate limiting.
-
-    Args:
-        registry: Service registry to use. If None, uses default global registry.
-        rate_limiter: Rate limiter to use. If None, uses global rate limiter.
-        client_id: Client identifier for rate limiting.
-
-    Returns:
-        Handler function
-    """
-    # Use provided rate limiter or global one
-    limiter = rate_limiter or get_global_rate_limiter()
-
-    def handler(**kwargs) -> str:
-        # Check rate limit first
-        if not limiter.check_rate_limit(client_id):
-            retry_after = limiter.get_retry_after(client_id)
-            return _safe_json_dumps({
-                "status": "error",
-                "message": f"Rate limit exceeded. Retry after {retry_after or 60} seconds.",
-                "error_type": "rate_limit_exceeded",
-                "retry_after": retry_after
-            }, indent=2)
-
-        try:
-            service_registry = registry or get_service_registry()
-            chain_processor = service_registry.get_service('chain_of_thought')
-            result = chain_processor.add_step(**kwargs)
-            return _safe_json_dumps(result, indent=2)
-        except Exception as e:
-            return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
-    return handler
+    """Create a chain_of_thought_step handler using the generic factory."""
+    return create_generic_handler('chain_of_thought_step', registry, rate_limiter, client_id)
 
 
 def create_get_chain_summary_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
-    """
-    Create a get_chain_summary handler with dependency injection and rate limiting.
-
-    Args:
-        registry: Service registry to use. If None, uses default global registry.
-        rate_limiter: Rate limiter to use. If None, uses global rate limiter.
-        client_id: Client identifier for rate limiting.
-
-    Returns:
-        Handler function
-    """
-    limiter = rate_limiter or get_global_rate_limiter()
-
-    def handler() -> str:
-        # Check rate limit first
-        if not limiter.check_rate_limit(client_id):
-            retry_after = limiter.get_retry_after(client_id)
-            return _safe_json_dumps({
-                "status": "error",
-                "message": f"Rate limit exceeded. Retry after {retry_after or 60} seconds.",
-                "error_type": "rate_limit_exceeded",
-                "retry_after": retry_after
-            }, indent=2)
-
-        try:
-            service_registry = registry or get_service_registry()
-            chain_processor = service_registry.get_service('chain_of_thought')
-            result = chain_processor.generate_summary()
-            return _safe_json_dumps(result, indent=2)
-        except Exception as e:
-            return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
-    return handler
+    """Create a get_chain_summary handler using the generic factory."""
+    return create_generic_handler('get_chain_summary', registry, rate_limiter, client_id)
 
 
 def create_clear_chain_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
-    """
-    Create a clear_chain handler with dependency injection and rate limiting.
-
-    Args:
-        registry: Service registry to use. If None, uses default global registry.
-        rate_limiter: Rate limiter to use. If None, uses global rate limiter.
-        client_id: Client identifier for rate limiting.
-
-    Returns:
-        Handler function
-    """
-    limiter = rate_limiter or get_global_rate_limiter()
-
-    def handler() -> str:
-        # Check rate limit first
-        if not limiter.check_rate_limit(client_id):
-            retry_after = limiter.get_retry_after(client_id)
-            return _safe_json_dumps({
-                "status": "error",
-                "message": f"Rate limit exceeded. Retry after {retry_after or 60} seconds.",
-                "error_type": "rate_limit_exceeded",
-                "retry_after": retry_after
-            }, indent=2)
-
-        try:
-            service_registry = registry or get_service_registry()
-            chain_processor = service_registry.get_service('chain_of_thought')
-            result = chain_processor.clear_chain()
-            return _safe_json_dumps(result, indent=2)
-        except Exception as e:
-            return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
-    return handler
+    """Create a clear_chain handler using the generic factory."""
+    return create_generic_handler('clear_chain', registry, rate_limiter, client_id)
 
 
 def create_generate_hypotheses_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
-    """
-    Create a generate_hypotheses handler with dependency injection and rate limiting.
-
-    Args:
-        registry: Service registry to use. If None, uses default global registry.
-        rate_limiter: Rate limiter to use. If None, uses global rate limiter.
-        client_id: Client identifier for rate limiting.
-
-    Returns:
-        Handler function
-    """
-    limiter = rate_limiter or get_global_rate_limiter()
-
-    def handler(**kwargs) -> str:
-        # Check rate limit first
-        if not limiter.check_rate_limit(client_id):
-            retry_after = limiter.get_retry_after(client_id)
-            return _safe_json_dumps({
-                "status": "error",
-                "message": f"Rate limit exceeded. Retry after {retry_after or 60} seconds.",
-                "error_type": "rate_limit_exceeded",
-                "retry_after": retry_after
-            }, indent=2)
-
-        try:
-            service_registry = registry or get_service_registry()
-            hypothesis_generator = service_registry.get_service('hypothesis_generator')
-            result = hypothesis_generator.generate_hypotheses(**kwargs)
-            return _safe_json_dumps(result, indent=2)
-        except Exception as e:
-            return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
-    return handler
+    """Create a generate_hypotheses handler using the generic factory."""
+    return create_generic_handler('generate_hypotheses', registry, rate_limiter, client_id)
 
 
 def create_map_assumptions_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
-    """
-    Create a map_assumptions handler with dependency injection and rate limiting.
-
-    Args:
-        registry: Service registry to use. If None, uses default global registry.
-        rate_limiter: Rate limiter to use. If None, uses global rate limiter.
-        client_id: Client identifier for rate limiting.
-
-    Returns:
-        Handler function
-    """
-    limiter = rate_limiter or get_global_rate_limiter()
-
-    def handler(**kwargs) -> str:
-        # Check rate limit first
-        if not limiter.check_rate_limit(client_id):
-            retry_after = limiter.get_retry_after(client_id)
-            return _safe_json_dumps({
-                "status": "error",
-                "message": f"Rate limit exceeded. Retry after {retry_after or 60} seconds.",
-                "error_type": "rate_limit_exceeded",
-                "retry_after": retry_after
-            }, indent=2)
-
-        try:
-            service_registry = registry or get_service_registry()
-            assumption_mapper = service_registry.get_service('assumption_mapper')
-            result = assumption_mapper.map_assumptions(**kwargs)
-            return _safe_json_dumps(result, indent=2)
-        except Exception as e:
-            return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
-    return handler
+    """Create a map_assumptions handler using the generic factory."""
+    return create_generic_handler('map_assumptions', registry, rate_limiter, client_id)
 
 
 def create_calibrate_confidence_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
-    """
-    Create a calibrate_confidence handler with dependency injection and rate limiting.
-
-    Args:
-        registry: Service registry to use. If None, uses default global registry.
-        rate_limiter: Rate limiter to use. If None, uses global rate limiter.
-        client_id: Client identifier for rate limiting.
-
-    Returns:
-        Handler function
-    """
-    limiter = rate_limiter or get_global_rate_limiter()
-
-    def handler(**kwargs) -> str:
-        # Check rate limit first
-        if not limiter.check_rate_limit(client_id):
-            retry_after = limiter.get_retry_after(client_id)
-            return _safe_json_dumps({
-                "status": "error",
-                "message": f"Rate limit exceeded. Retry after {retry_after or 60} seconds.",
-                "error_type": "rate_limit_exceeded",
-                "retry_after": retry_after
-            }, indent=2)
-
-        try:
-            service_registry = registry or get_service_registry()
-            confidence_calibrator = service_registry.get_service('confidence_calibrator')
-            result = confidence_calibrator.calibrate_confidence(**kwargs)
-            return _safe_json_dumps(result, indent=2)
-        except Exception as e:
-            return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
-    return handler
+    """Create a calibrate_confidence handler using the generic factory."""
+    return create_generic_handler('calibrate_confidence', registry, rate_limiter, client_id)
 
 
 # Backward compatibility: create default handlers using the global registry

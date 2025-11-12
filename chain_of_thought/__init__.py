@@ -31,6 +31,9 @@ from .core import (
     create_generate_hypotheses_handler,
     create_map_assumptions_handler,
     create_calibrate_confidence_handler,
+    # Generic handler factory (Task #5)
+    create_generic_handler,
+    TOOL_HANDLERS_CONFIG,
     # Service registry
     ServiceRegistry,
     get_service_registry,
@@ -244,6 +247,9 @@ __all__ = [
     "create_generate_hypotheses_handler",
     "create_map_assumptions_handler",
     "create_calibrate_confidence_handler",
+    "Generic handler factory",
+    "create_generic_handler",
+    "TOOL_HANDLERS_CONFIG",
     "Backward compatibility",
     "chain_of_thought_step_handler",
     "get_chain_summary_handler",
