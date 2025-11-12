@@ -19,7 +19,7 @@ Usage:
 
 from .core import (
     chain_of_thought_step_handler,
-    get_chain_summary_handler, 
+    get_chain_summary_handler,
     clear_chain_handler,
     generate_hypotheses_handler,
     map_assumptions_handler,
@@ -30,6 +30,7 @@ from .core import (
     BedrockStopReasonHandler,
     AsyncChainOfThoughtProcessor
 )
+from .validators import ParameterValidator
 
 # Tool specifications compatible with Converse API format
 TOOL_SPECS = [
@@ -216,12 +217,13 @@ HANDLERS = {
 # Convenience exports
 __all__ = [
     "TOOL_SPECS",
-    "HANDLERS", 
+    "HANDLERS",
     "ChainOfThought",
     "ThreadAwareChainOfThought",
     "StopReasonHandler",
     "BedrockStopReasonHandler",
     "AsyncChainOfThoughtProcessor",
+    "ParameterValidator",
     "chain_of_thought_step_handler",
     "get_chain_summary_handler",
     "clear_chain_handler",
