@@ -24,6 +24,17 @@ from .core import (
     generate_hypotheses_handler,
     map_assumptions_handler,
     calibrate_confidence_handler,
+    # New dependency injection functions
+    create_chain_of_thought_step_handler,
+    create_get_chain_summary_handler,
+    create_clear_chain_handler,
+    create_generate_hypotheses_handler,
+    create_map_assumptions_handler,
+    create_calibrate_confidence_handler,
+    # Service registry
+    ServiceRegistry,
+    get_service_registry,
+    # Core classes
     ChainOfThought,
     ThreadAwareChainOfThought,
     StopReasonHandler,
@@ -218,18 +229,30 @@ HANDLERS = {
 __all__ = [
     "TOOL_SPECS",
     "HANDLERS",
+    "Core classes",
     "ChainOfThought",
     "ThreadAwareChainOfThought",
     "StopReasonHandler",
     "BedrockStopReasonHandler",
     "AsyncChainOfThoughtProcessor",
-    "ParameterValidator",
+    "Dependency injection",
+    "ServiceRegistry",
+    "get_service_registry",
+    "create_chain_of_thought_step_handler",
+    "create_get_chain_summary_handler",
+    "create_clear_chain_handler",
+    "create_generate_hypotheses_handler",
+    "create_map_assumptions_handler",
+    "create_calibrate_confidence_handler",
+    "Backward compatibility",
     "chain_of_thought_step_handler",
     "get_chain_summary_handler",
     "clear_chain_handler",
     "generate_hypotheses_handler",
     "map_assumptions_handler",
-    "calibrate_confidence_handler"
+    "calibrate_confidence_handler",
+    "Utilities",
+    "ParameterValidator"
 ]
 
 # Version info

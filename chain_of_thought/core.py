@@ -11,6 +11,107 @@ from abc import ABC, abstractmethod
 from .validators import ParameterValidator
 
 
+class ServiceRegistry:
+    """
+    Thread-safe dependency injection container for managing service instances.
+
+    Provides a clean way to manage service lifecycles while maintaining
+    backward compatibility with global singleton usage.
+    """
+
+    def __init__(self):
+        self._services: Dict[str, Any] = {}
+        self._factories: Dict[str, Callable[[], Any]] = {}
+        self._lock = threading.RLock()
+
+    def _register_default_factories(self):
+        """Register default factories for all core services."""
+        self._factories.update({
+            'chain_of_thought': lambda: ChainOfThought(),
+            'hypothesis_generator': lambda: HypothesisGenerator(),
+            'assumption_mapper': lambda: AssumptionMapper(),
+            'confidence_calibrator': lambda: ConfidenceCalibrator(),
+        })
+
+    def register_service(self, name: str, service: Any) -> None:
+        """
+        Register a service instance.
+
+        Args:
+            name: Service name
+            service: Service instance to register
+        """
+        with self._lock:
+            self._services[name] = service
+
+    def register_factory(self, name: str, factory: Callable[[], Any]) -> None:
+        """
+        Register a factory function for lazy service creation.
+
+        Args:
+            name: Service name
+            factory: Factory function that creates the service
+        """
+        with self._lock:
+            self._factories[name] = factory
+            # Remove any existing instance to force recreation
+            self._services.pop(name, None)
+
+    def get_service(self, name: str) -> Any:
+        """
+        Get a service instance, creating it lazily if needed.
+
+        Args:
+            name: Service name
+
+        Returns:
+            Service instance
+
+        Raises:
+            KeyError: If service is not registered
+        """
+        with self._lock:
+            # Return existing instance if available
+            if name in self._services:
+                return self._services[name]
+
+            # Create new instance using factory
+            if name in self._factories:
+                service = self._factories[name]()
+                self._services[name] = service
+                return service
+
+            raise KeyError(f"Service '{name}' not registered")
+
+    def has_service(self, name: str) -> bool:
+        """Check if a service is registered."""
+        with self._lock:
+            return name in self._factories
+
+    def clear_service(self, name: str) -> None:
+        """Clear a service instance (will be recreated on next access)."""
+        with self._lock:
+            self._services.pop(name, None)
+
+    def clear_all_services(self) -> None:
+        """Clear all service instances."""
+        with self._lock:
+            self._services.clear()
+
+    def initialize_default_services(self):
+        """Initialize default service factories after all classes are defined."""
+        self._register_default_factories()
+
+
+# Global service registry for backward compatibility
+_default_registry = ServiceRegistry()
+
+
+def get_service_registry() -> ServiceRegistry:
+    """Get the default service registry."""
+    return _default_registry
+
+
 @dataclass
 class ThoughtStep:
     """Represents a single step in the chain of thought."""
@@ -389,8 +490,6 @@ class HypothesisGenerator:
             )
 
 
-# Global instance for simple usage
-_hypothesis_generator = HypothesisGenerator()
 
 
 @dataclass
@@ -656,8 +755,6 @@ class AssumptionMapper:
         return graph
 
 
-# Global instance for simple usage
-_assumption_mapper = AssumptionMapper()
 
 
 @dataclass
@@ -885,8 +982,6 @@ class ConfidenceCalibrator:
         }
 
 
-# Global instance for simple usage
-_confidence_calibrator = ConfidenceCalibrator()
 
 
 # Security helper function for safe JSON serialization
@@ -937,62 +1032,171 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
         )
 
 
-# Global instance for simple usage
-_chain_processor = ChainOfThought()
+# Initialize default service factories now that all classes are defined
+_default_registry.initialize_default_services()
+
+# Global instance for simple usage - now using the service registry
+_chain_processor = _default_registry.get_service('chain_of_thought')
+_hypothesis_generator = _default_registry.get_service('hypothesis_generator')
+_assumption_mapper = _default_registry.get_service('assumption_mapper')
+_confidence_calibrator = _default_registry.get_service('confidence_calibrator')
 
 
+def create_chain_of_thought_step_handler(registry: Optional[ServiceRegistry] = None):
+    """
+    Create a chain_of_thought_step handler with dependency injection.
+
+    Args:
+        registry: Service registry to use. If None, uses default global registry.
+
+    Returns:
+        Handler function
+    """
+    def handler(**kwargs) -> str:
+        try:
+            service_registry = registry or get_service_registry()
+            chain_processor = service_registry.get_service('chain_of_thought')
+            result = chain_processor.add_step(**kwargs)
+            return _safe_json_dumps(result, indent=2)
+        except Exception as e:
+            return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+    return handler
+
+
+def create_get_chain_summary_handler(registry: Optional[ServiceRegistry] = None):
+    """
+    Create a get_chain_summary handler with dependency injection.
+
+    Args:
+        registry: Service registry to use. If None, uses default global registry.
+
+    Returns:
+        Handler function
+    """
+    def handler() -> str:
+        try:
+            service_registry = registry or get_service_registry()
+            chain_processor = service_registry.get_service('chain_of_thought')
+            result = chain_processor.generate_summary()
+            return _safe_json_dumps(result, indent=2)
+        except Exception as e:
+            return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+    return handler
+
+
+def create_clear_chain_handler(registry: Optional[ServiceRegistry] = None):
+    """
+    Create a clear_chain handler with dependency injection.
+
+    Args:
+        registry: Service registry to use. If None, uses default global registry.
+
+    Returns:
+        Handler function
+    """
+    def handler() -> str:
+        try:
+            service_registry = registry or get_service_registry()
+            chain_processor = service_registry.get_service('chain_of_thought')
+            result = chain_processor.clear_chain()
+            return _safe_json_dumps(result, indent=2)
+        except Exception as e:
+            return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+    return handler
+
+
+def create_generate_hypotheses_handler(registry: Optional[ServiceRegistry] = None):
+    """
+    Create a generate_hypotheses handler with dependency injection.
+
+    Args:
+        registry: Service registry to use. If None, uses default global registry.
+
+    Returns:
+        Handler function
+    """
+    def handler(**kwargs) -> str:
+        try:
+            service_registry = registry or get_service_registry()
+            hypothesis_generator = service_registry.get_service('hypothesis_generator')
+            result = hypothesis_generator.generate_hypotheses(**kwargs)
+            return _safe_json_dumps(result, indent=2)
+        except Exception as e:
+            return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+    return handler
+
+
+def create_map_assumptions_handler(registry: Optional[ServiceRegistry] = None):
+    """
+    Create a map_assumptions handler with dependency injection.
+
+    Args:
+        registry: Service registry to use. If None, uses default global registry.
+
+    Returns:
+        Handler function
+    """
+    def handler(**kwargs) -> str:
+        try:
+            service_registry = registry or get_service_registry()
+            assumption_mapper = service_registry.get_service('assumption_mapper')
+            result = assumption_mapper.map_assumptions(**kwargs)
+            return _safe_json_dumps(result, indent=2)
+        except Exception as e:
+            return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+    return handler
+
+
+def create_calibrate_confidence_handler(registry: Optional[ServiceRegistry] = None):
+    """
+    Create a calibrate_confidence handler with dependency injection.
+
+    Args:
+        registry: Service registry to use. If None, uses default global registry.
+
+    Returns:
+        Handler function
+    """
+    def handler(**kwargs) -> str:
+        try:
+            service_registry = registry or get_service_registry()
+            confidence_calibrator = service_registry.get_service('confidence_calibrator')
+            result = confidence_calibrator.calibrate_confidence(**kwargs)
+            return _safe_json_dumps(result, indent=2)
+        except Exception as e:
+            return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+    return handler
+
+
+# Backward compatibility: create default handlers using the global registry
 def chain_of_thought_step_handler(**kwargs) -> str:
-    """Handler function for the chain_of_thought_step tool."""
-    try:
-        result = _chain_processor.add_step(**kwargs)
-        return _safe_json_dumps(result, indent=2)
-    except Exception as e:
-        return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+    """Handler function for the chain_of_thought_step tool (backward compatibility)."""
+    return create_chain_of_thought_step_handler()(**kwargs)
 
 
 def get_chain_summary_handler() -> str:
-    """Handler function for the get_chain_summary tool."""
-    try:
-        result = _chain_processor.generate_summary()
-        return _safe_json_dumps(result, indent=2)
-    except Exception as e:
-        return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+    """Handler function for the get_chain_summary tool (backward compatibility)."""
+    return create_get_chain_summary_handler()()
 
 
 def clear_chain_handler() -> str:
-    """Handler function for the clear_chain tool."""
-    try:
-        result = _chain_processor.clear_chain()
-        return _safe_json_dumps(result, indent=2)
-    except Exception as e:
-        return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+    """Handler function for the clear_chain tool (backward compatibility)."""
+    return create_clear_chain_handler()()
 
 
 def generate_hypotheses_handler(**kwargs) -> str:
-    """Handler function for the generate_hypotheses tool."""
-    try:
-        result = _hypothesis_generator.generate_hypotheses(**kwargs)
-        return _safe_json_dumps(result, indent=2)
-    except Exception as e:
-        return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+    """Handler function for the generate_hypotheses tool (backward compatibility)."""
+    return create_generate_hypotheses_handler()(**kwargs)
 
 
 def map_assumptions_handler(**kwargs) -> str:
-    """Handler function for the map_assumptions tool."""
-    try:
-        result = _assumption_mapper.map_assumptions(**kwargs)
-        return _safe_json_dumps(result, indent=2)
-    except Exception as e:
-        return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+    """Handler function for the map_assumptions tool (backward compatibility)."""
+    return create_map_assumptions_handler()(**kwargs)
 
 
 def calibrate_confidence_handler(**kwargs) -> str:
-    """Handler function for the calibrate_confidence tool."""
-    try:
-        result = _confidence_calibrator.calibrate_confidence(**kwargs)
-        return _safe_json_dumps(result, indent=2)
-    except Exception as e:
-        return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+    """Handler function for the calibrate_confidence tool (backward compatibility)."""
+    return create_calibrate_confidence_handler()(**kwargs)
 
 
 class StopReasonHandler(ABC):
@@ -1194,38 +1398,50 @@ class AsyncChainOfThoughtProcessor:
 
 
 class ThreadAwareChainOfThought:
-    """Thread-safe version for production use."""
-    
+    """Thread-safe version for production use with dependency injection support."""
+
     _instances: Dict[str, ChainOfThought] = {}
     _lock = threading.RLock()
-    
+
     @classmethod
-    def for_conversation(cls, conversation_id: str) -> ChainOfThought:
+    def for_conversation(cls, conversation_id: str, registry: Optional[ServiceRegistry] = None) -> ChainOfThought:
         """Get or create a ChainOfThought instance for a conversation."""
         with cls._lock:
             if conversation_id not in cls._instances:
+                service_registry = registry or get_service_registry()
+                # Create a fresh ChainOfThought instance
                 cls._instances[conversation_id] = ChainOfThought()
             return cls._instances[conversation_id]
-    
-    def __init__(self, conversation_id: str):
+
+    def __init__(self, conversation_id: str, registry: Optional[ServiceRegistry] = None):
         self.conversation_id = conversation_id
-        self.chain = self.for_conversation(conversation_id)
-    
+        self.registry = registry or get_service_registry()
+        self.chain = self.for_conversation(conversation_id, self.registry)
+
     def get_tool_specs(self):
         """Get tool specs for this instance."""
         from . import TOOL_SPECS
         return TOOL_SPECS
-    
+
     def get_handlers(self):
-        """Get handlers bound to this instance."""
+        """Get handlers bound to this instance using dependency injection."""
+        # Create a service registry with this instance's ChainOfThought
+        instance_registry = ServiceRegistry()
+
+        # Copy all factories from the main registry
+        for service_name in ['hypothesis_generator', 'assumption_mapper', 'confidence_calibrator']:
+            if self.registry.has_service(service_name):
+                instance_registry.register_factory(service_name, lambda name=service_name: self.registry.get_service(name))
+
+        # Register this instance's ChainOfThought
+        instance_registry.register_service('chain_of_thought', self.chain)
+
+        # Create handlers using the instance registry
         return {
-            "chain_of_thought_step": lambda **kwargs: _safe_json_dumps(
-                self.chain.add_step(**kwargs), indent=2
-            ),
-            "get_chain_summary": lambda: _safe_json_dumps(
-                self.chain.generate_summary(), indent=2
-            ),
-            "clear_chain": lambda: _safe_json_dumps(
-                self.chain.clear_chain(), indent=2
-            )
+            "chain_of_thought_step": create_chain_of_thought_step_handler(instance_registry),
+            "get_chain_summary": create_get_chain_summary_handler(instance_registry),
+            "clear_chain": create_clear_chain_handler(instance_registry),
+            "generate_hypotheses": create_generate_hypotheses_handler(instance_registry),
+            "map_assumptions": create_map_assumptions_handler(instance_registry),
+            "calibrate_confidence": create_calibrate_confidence_handler(instance_registry)
         }
