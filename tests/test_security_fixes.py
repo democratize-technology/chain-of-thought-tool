@@ -690,8 +690,8 @@ class TestAWSSecurityConfiguration:
                 if service == 'sts':
                     mock_sts = MagicMock()
                     mock_sts.get_caller_identity.return_value = {
-                        'Account': '123456789012',
-                        'Arn': 'arn:aws:iam::123456789012:user/testuser'
+                        'Account': 'YOUR_AWS_ACCOUNT_ID',
+                        'Arn': 'arn:aws:iam::YOUR_AWS_ACCOUNT_ID:user/your-username'
                     }
                     return mock_sts
                 elif service == 'bedrock-runtime':
@@ -714,8 +714,8 @@ class TestAWSSecurityConfiguration:
         with patch('boto3.client') as mock_client:
             mock_sts = MagicMock()
             mock_sts.get_caller_identity.return_value = {
-                'Account': '123456789012',
-                'Arn': 'arn:aws:iam::123456789012:user/testuser'
+                'Account': 'YOUR_AWS_ACCOUNT_ID',
+                'Arn': 'arn:aws:iam::YOUR_AWS_ACCOUNT_ID:user/your-username'
             }
             
             mock_bedrock = MagicMock()
@@ -733,7 +733,11 @@ class TestAWSSecurityConfiguration:
     
     def test_no_hardcoded_credentials(self):
         """Test that no credentials are hardcoded in the example file."""
-        with open('/Users/jeremy/Development/hacks/chain-of-thought/example_bedrock_integration.py', 'r') as f:
+        # Get the project root directory relative to this test file
+        project_root = os.path.dirname(os.path.dirname(__file__))
+        example_file_path = os.path.join(project_root, 'example_bedrock_integration.py')
+
+        with open(example_file_path, 'r') as f:
             content = f.read()
         
         # Check for common credential patterns
@@ -766,7 +770,11 @@ class TestAWSSecurityConfiguration:
     
     def test_environment_variable_documentation(self):
         """Test that environment variables are properly documented."""
-        with open('/Users/jeremy/Development/hacks/chain-of-thought/example_bedrock_integration.py', 'r') as f:
+        # Get the project root directory relative to this test file
+        project_root = os.path.dirname(os.path.dirname(__file__))
+        example_file_path = os.path.join(project_root, 'example_bedrock_integration.py')
+
+        with open(example_file_path, 'r') as f:
             content = f.read()
         
         # Should document required environment variables

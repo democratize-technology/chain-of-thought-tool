@@ -15,7 +15,7 @@ This project uses PyPI's Trusted Publishing (OIDC) for secure, token-free publis
 3. **Configure Trusted Publishing**:
    - Go to PyPI project settings → Publishing → Trusted Publishing
    - Add trusted publisher with:
-     - **Owner**: `democratize-technology`
+     - **Owner**: `your-github-username`
      - **Repository**: `chain-of-thought-tool`
      - **Workflow**: `publish.yml`
      - **Environment**: `pypi` (for production) and `testpypi` (for testing)
