@@ -13,6 +13,28 @@ import logging
 from abc import ABC, abstractmethod
 from .validators import ParameterValidator
 
+# =============================================================================
+# CONFIGURATION CONSTANTS - Task #4 Magic Numbers Extraction
+# =============================================================================
+
+# Rate Limiter Configuration
+DEFAULT_MAX_REQUESTS_PER_MINUTE = 60
+DEFAULT_MAX_REQUESTS_PER_HOUR = 1000
+DEFAULT_MAX_BURST_SIZE = 10
+
+# Sanitization and Security Limits
+MAX_RECURSION_DEPTH = 50
+MAX_LIST_SIZE = 100
+MAX_STRING_LENGTH = 1000
+MAX_JSON_SIZE = 100000  # 100KB limit
+
+# Confidence Calibration Thresholds
+HIGH_CONFIDENCE_THRESHOLD = 0.15
+MEDIUM_CONFIDENCE_THRESHOLD = 0.05
+
+# Text Processing Limits
+MAX_PREDICTION_WORDS = 20
+
 
 class ServiceCreationError(Exception):
     """Raised when service creation fails in ServiceRegistry."""
@@ -924,7 +946,7 @@ class ConfidenceCalibrator:
             uncertainty_factors.append("Technology uncertainty - rapid change domain")
 
         # Complexity uncertainty
-        if len(prediction.split()) > 20:
+        if len(prediction.split()) > MAX_PREDICTION_WORDS:
             uncertainty_factors.append("Complexity uncertainty - multiple interconnected factors")
 
         # Data uncertainty
@@ -939,9 +961,9 @@ class ConfidenceCalibrator:
         risk_level: str
     ) -> str:
         """Generate reasoning text for confidence calibration."""
-        if adjustment_magnitude > 0.15:
+        if adjustment_magnitude > HIGH_CONFIDENCE_THRESHOLD:
             reasoning = f"Significant confidence reduction ({adjustment_magnitude:.2f}) due to strong overconfidence indicators."
-        elif adjustment_magnitude > 0.05:
+        elif adjustment_magnitude > MEDIUM_CONFIDENCE_THRESHOLD:
             reasoning = f"Moderate confidence adjustment ({adjustment_magnitude:.2f}) due to uncertainty factors."
         else:
             reasoning = f"Minor confidence adjustment ({adjustment_magnitude:.2f}) - original estimate reasonably calibrated."
@@ -1114,7 +1136,7 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
             Uses whitelist approach with depth limiting to prevent recursion attacks.
             """
             # Prevent deep recursion attacks
-            if depth > 50:
+            if depth > MAX_RECURSION_DEPTH:
                 return {"status": "error", "message": "Data too deep"}
 
             if isinstance(obj, SAFE_TYPES):
@@ -1137,7 +1159,7 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
                 elif isinstance(obj, list):
                     # Sanitize list elements recursively
                     try:
-                        return [sanitize(item, depth + 1) for item in obj[:100]]  # Limit list size
+                        return [sanitize(item, depth + 1) for item in obj[:MAX_LIST_SIZE]]  # Limit list size
                     except Exception:
                         return [{"status": "error", "message": "List processing failed"}]
 
@@ -1147,7 +1169,7 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
                     for pattern in DANGEROUS_PATTERNS:
                         if pattern in content_lower:
                             return "[FILTERED_CONTENT]"
-                    return obj[:1000]  # Limit string length
+                    return obj[:MAX_STRING_LENGTH]  # Limit string length
 
                 elif isinstance(obj, (int, float)):
                     # Check for dangerous numeric values
@@ -1180,7 +1202,7 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
         )
 
         # Prevent DoS through huge JSON output
-        if len(json_string) > 100000:  # 100KB limit
+        if len(json_string) > MAX_JSON_SIZE:  # Prevent DoS through huge JSON output
             return json.dumps({
                 "status": "error",
                 "message": "Data processing failed"
@@ -1209,7 +1231,7 @@ class RateLimiter:
     Each client is tracked separately to ensure isolation.
     """
 
-    def __init__(self, max_requests_per_minute: int = 60, max_requests_per_hour: int = 1000, max_burst_size: int = 10):
+    def __init__(self, max_requests_per_minute: int = DEFAULT_MAX_REQUESTS_PER_MINUTE, max_requests_per_hour: int = DEFAULT_MAX_REQUESTS_PER_HOUR, max_burst_size: int = DEFAULT_MAX_BURST_SIZE):
         """
         Initialize rate limiter with configurable limits.
 
