@@ -12,7 +12,25 @@ Tests cover:
 import pytest
 import json
 import asyncio
+import sys
 from unittest.mock import Mock, MagicMock, patch, AsyncMock
+
+# Mock boto3 and botocore modules to avoid dependency installation
+sys.modules['boto3'] = MagicMock()
+sys.modules['botocore'] = MagicMock()
+
+# Create a proper mock ClientError exception class
+class MockClientError(Exception):
+    def __init__(self, error_response, operation_name):
+        self.response = error_response
+        self.operation_name = operation_name
+        super().__init__(str(error_response.get('Error', {}).get('Message', 'Unknown error')))
+
+# Mock botocore.exceptions with proper ClientError
+mock_exceptions = MagicMock()
+mock_exceptions.ClientError = MockClientError
+sys.modules['botocore.exceptions'] = mock_exceptions
+
 from chain_of_thought.core import (
     AsyncChainOfThoughtProcessor,
     BedrockStopReasonHandler
@@ -577,19 +595,29 @@ class TestRealisticBedrockScenarios:
         import time
         
         # Test tool execution performance
-        handler = BedrockStopReasonHandler()
-        
+        from chain_of_thought.core import create_chain_of_thought_step_handler, RateLimiter
+
+        # Create rate limiter with high limits for performance testing
+        perf_rate_limiter = RateLimiter(
+            max_requests_per_minute=1000,  # Allow 1000 requests per minute
+            max_requests_per_hour=10000,  # Allow 10000 requests per hour
+            max_burst_size=200  # Allow 200 consecutive requests
+        )
+
+        # Create handler with high rate limit for performance testing
+        handler_func = create_chain_of_thought_step_handler(rate_limiter=perf_rate_limiter, client_id="perf_test")
+
         # Measure tool execution time
         start_time = time.time()
-        
+
         for i in range(100):
-            result = handler.handlers["chain_of_thought_step"](
+            result = handler_func(
                 thought=f"Performance test step {i}",
                 step_number=i + 1,
                 total_steps=100,
                 next_step_needed=True
             )
-            
+
             # Verify result is properly formatted
             parsed_result = json.loads(result)
             assert parsed_result["status"] == "success"
