@@ -9,8 +9,14 @@ import asyncio
 import threading
 import weakref
 import time
+import logging
 from abc import ABC, abstractmethod
 from .validators import ParameterValidator
+
+
+class ServiceCreationError(Exception):
+    """Raised when service creation fails in ServiceRegistry."""
+    pass
 
 
 class ServiceRegistry:
@@ -79,9 +85,24 @@ class ServiceRegistry:
 
             # Create new instance using factory
             if name in self._factories:
-                service = self._factories[name]()
-                self._services[name] = service
-                return service
+                try:
+                    service = self._factories[name]()
+
+                    # Validate that factory returned a valid service
+                    if service is None:
+                        raise ServiceCreationError(
+                            f"Failed to create service '{name}': factory returned None"
+                        )
+
+                    self._services[name] = service
+                    return service
+
+                except Exception as e:
+                    # Log the error for debugging
+                    logging.error(f"Failed to create service '{name}': {type(e).__name__}: {str(e)}")
+                    raise ServiceCreationError(
+                        f"Failed to create service '{name}': {str(e)}"
+                    ) from e
 
             raise KeyError(f"Service '{name}' not registered")
 
@@ -1305,6 +1326,9 @@ _hypothesis_generator = _default_registry.get_service('hypothesis_generator')
 _assumption_mapper = _default_registry.get_service('assumption_mapper')
 _confidence_calibrator = _default_registry.get_service('confidence_calibrator')
 
+# Import security module components
+from .security import RequestValidator, SecurityValidationError, default_validator
+
 
 def create_chain_of_thought_step_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
     """
@@ -1651,28 +1675,101 @@ class BedrockStopReasonHandler(StopReasonHandler):
 class AsyncChainOfThoughtProcessor:
     """Async wrapper for CoT that integrates with Bedrock tool loops."""
     
-    def __init__(self, conversation_id: str, stop_handler: Optional[StopReasonHandler] = None):
+    def __init__(self, conversation_id: str, stop_handler: Optional[StopReasonHandler] = None,
+                 request_validator: Optional[RequestValidator] = None,
+                 aws_call_timeout: float = 30.0, tool_call_timeout: float = 10.0):
+        """
+        Initialize AsyncChainOfThoughtProcessor with configurable timeouts.
+
+        Args:
+            conversation_id: Unique identifier for the conversation
+            stop_handler: Handler for stopReason logic
+            request_validator: Security request validator
+            aws_call_timeout: Timeout in seconds for AWS API calls
+            tool_call_timeout: Timeout in seconds for tool handler calls
+        """
         self.conversation_id = conversation_id
         self.chain = ChainOfThought()
         # Pass the chain instance to the handler so it uses this specific chain
         self.stop_handler = stop_handler or BedrockStopReasonHandler(chain=self.chain)
+        self.request_validator = request_validator or default_validator
         self._tool_use_count = 0
         self._max_iterations = 20
-    
-    async def process_tool_loop(self, 
+
+        # Timeout configuration
+        self.aws_call_timeout = aws_call_timeout
+        self.tool_call_timeout = tool_call_timeout
+
+    async def _safe_aws_call(self, bedrock_client, **kwargs) -> Dict[str, Any]:
+        """
+        Execute AWS Bedrock call with proper timeout handling.
+
+        Args:
+            bedrock_client: AWS Bedrock client
+            **kwargs: Parameters for converse call
+
+        Returns:
+            AWS response
+
+        Raises:
+            TimeoutError: If AWS call exceeds timeout
+        """
+        try:
+            loop = asyncio.get_event_loop()
+            return await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: bedrock_client.converse(**kwargs)
+                ),
+                timeout=self.aws_call_timeout
+            )
+        except asyncio.TimeoutError:
+            raise TimeoutError(f"AWS Bedrock call timed out after {self.aws_call_timeout} seconds")
+
+    async def _safe_tool_call(self, handler_func: Callable, **kwargs) -> str:
+        """
+        Execute tool handler call with proper timeout handling.
+
+        Args:
+            handler_func: Tool handler function
+            **kwargs: Parameters for handler
+
+        Returns:
+            Handler response JSON string
+
+        Raises:
+            TimeoutError: If tool call exceeds timeout
+        """
+        try:
+            # Run tool handler in thread pool with timeout
+            result = await asyncio.wait_for(
+                asyncio.to_thread(handler_func, **kwargs),
+                timeout=self.tool_call_timeout
+            )
+            return result
+        except asyncio.TimeoutError:
+            raise TimeoutError(f"Tool call timed out after {self.tool_call_timeout} seconds")
+
+    async def process_tool_loop(self,
                               bedrock_client,
                               initial_request: Dict[str, Any],
                               max_iterations: Optional[int] = None) -> Dict[str, Any]:
         """Process Bedrock tool loop with CoT integration."""
-        
+
+        # Validate and sanitize the initial request to prevent injection attacks
+        try:
+            sanitized_request = self.request_validator.validate_and_sanitize_request(initial_request)
+        except SecurityValidationError as e:
+            raise SecurityValidationError(f"Security validation failed: {str(e)}")
+
         max_iter = max_iterations or self._max_iterations
-        messages = initial_request.get("messages", []).copy()
-        
+        messages = sanitized_request.get("messages", []).copy()
+
         for iteration in range(max_iter):
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None, 
-                lambda: bedrock_client.converse(**{**initial_request, "messages": messages})
+            # Use safe AWS call with timeout protection
+            response = await self._safe_aws_call(
+                bedrock_client,
+                **{**sanitized_request, "messages": messages}
             )
             
             stop_reason = response.get("stopReason")
@@ -1697,11 +1794,23 @@ class AsyncChainOfThoughtProcessor:
                         tool_use_id = tool_use["toolUseId"]
                         
                         try:
-                            result = await self.stop_handler.execute_tool_call(tool_name, tool_input)
+                            # Use safe tool call with timeout protection
+                            result = await asyncio.wait_for(
+                                self.stop_handler.execute_tool_call(tool_name, tool_input),
+                                timeout=self.tool_call_timeout
+                            )
                             tool_results.append({
                                 "toolResult": {
                                     "toolUseId": tool_use_id,
                                     "content": [{"text": _safe_json_dumps(result)}]
+                                }
+                            })
+                        except asyncio.TimeoutError:
+                            tool_results.append({
+                                "toolResult": {
+                                    "toolUseId": tool_use_id,
+                                    "content": [{"text": _safe_json_dumps({"error": f"Tool call timed out after {self.tool_call_timeout} seconds"})}],
+                                    "status": "error"
                                 }
                             })
                         except Exception as e:
@@ -1735,6 +1844,41 @@ class AsyncChainOfThoughtProcessor:
                 }
             }
         }
+
+    async def process_tool_loop_with_timeout(self,
+                                           bedrock_client,
+                                           initial_request: Dict[str, Any],
+                                           max_iterations: Optional[int] = None,
+                                           overall_timeout: Optional[float] = None) -> Dict[str, Any]:
+        """
+        Process Bedrock tool loop with overall timeout protection.
+
+        Args:
+            bedrock_client: AWS Bedrock client
+            initial_request: Initial Bedrock request
+            max_iterations: Maximum number of tool loop iterations
+            overall_timeout: Overall timeout for the entire process
+
+        Returns:
+            Bedrock response or timeout error response
+        """
+        timeout = overall_timeout or (self.aws_call_timeout * 2)  # Default to 2x AWS timeout
+
+        try:
+            return await asyncio.wait_for(
+                self.process_tool_loop(bedrock_client, initial_request, max_iterations),
+                timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            return {
+                "stopReason": "timeout",
+                "output": {
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"text": f"Request timeout after {timeout} seconds"}]
+                    }
+                }
+            }
     
     async def get_reasoning_summary(self) -> Dict[str, Any]:
         """Get summary of the reasoning process."""
