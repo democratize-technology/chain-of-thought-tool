@@ -347,18 +347,14 @@ class TestChainOfThoughtEdgeCases:
         assert self.cot.steps[0].thought == ""
     
     def test_negative_step_numbers(self):
-        """Test behavior with negative step numbers.""" 
-        result = self.cot.add_step("Test", -1, 1, False)
-        
-        assert result["status"] == "success"
-        assert self.cot.steps[0].step_number == -1
+        """Test that negative step numbers are rejected for security."""
+        with pytest.raises(ValueError, match="step_number must be between 1 and 1000"):
+            self.cot.add_step("Test", -1, 1, False)
     
     def test_large_numbers(self):
-        """Test handling of very large step numbers."""
-        result = self.cot.add_step("Test", 999999, 1000000, False)
-        
-        assert result["status"] == "success"
-        assert result["progress"] == "999999/1000000"
+        """Test that very large step numbers are rejected for security."""
+        with pytest.raises(ValueError, match="step_number must be between 1 and 1000"):
+            self.cot.add_step("Test", 999999, 1000000, False)
     
     def test_unicode_content(self):
         """Test handling of unicode content."""

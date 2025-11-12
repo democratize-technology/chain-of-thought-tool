@@ -58,6 +58,8 @@ This module includes comprehensive protection against:
 - Memory exhaustion via large inputs
 - Nested structure attacks
 - Regex bypass attempts
+- Memory exhaustion protection via step number bounds (1-1000 range)
+- Dependency list bounds validation to prevent resource exhaustion
 """
 from typing import Dict, List, Optional, Any, Union
 import html
@@ -270,33 +272,37 @@ class ParameterValidator:
         """
         Validate step_number and total_steps parameters with enhanced type safety.
 
+        SECURITY IMPROVEMENT (Task #2): Replaced sys.maxsize range with reasonable bounds (1-1000)
+        to prevent memory exhaustion attacks. The previous validation allowed values up to
+        sys.maxsize (9.2 quintillion on 64-bit systems), which could cause memory issues
+        and DoS vulnerabilities.
+
         Args:
-            step_number: The current step number
-            total_steps: The total number of steps
+            step_number: The current step number (must be 1-1000)
+            total_steps: The total number of steps (must be 1-1000)
 
         Returns:
             Tuple of (step_number, total_steps) as validated
 
         Raises:
-            ValueError: If parameters are invalid
+            ValueError: If parameters are invalid or out of bounds
         """
         # Validate step_number with strict type checking
         self._strict_type_check(step_number, int, "step_number")
-        # Allow very large range for step numbers to support existing use cases
-        # But prevent obvious overflow/underflow attacks (allowing sys.maxsize for backward compatibility)
-        import sys
-        if step_number < sys.maxsize * -1 or step_number > sys.maxsize:
-            raise ValueError("step_number is out of valid range")
+        # SECURITY: Enforce reasonable bounds to prevent memory issues (1-1000 range)
+        # Previously used sys.maxsize range which was a security vulnerability
+        if step_number < 1 or step_number > 1000:
+            raise ValueError("step_number must be between 1 and 1000")
 
         # Validate total_steps with strict type checking
         self._strict_type_check(total_steps, int, "total_steps")
-        # Allow very large range for total_steps to support existing use cases
-        if total_steps < sys.maxsize * -1 or total_steps > sys.maxsize:
-            raise ValueError("total_steps is out of valid range")
+        # SECURITY: Enforce reasonable bounds to prevent memory issues (1-1000 range)
+        # Previously used sys.maxsize range which was a security vulnerability
+        if total_steps < 1 or total_steps > 1000:
+            raise ValueError("total_steps must be between 1 and 1000")
 
-        # Allow flexibility in step_number vs total_steps for backward compatibility
-        # (Only validate this for positive numbers where it makes logical sense)
-        if step_number > 0 and total_steps > 0 and step_number > total_steps:
+        # Validate logical relationship between step_number and total_steps
+        if step_number > total_steps:
             raise ValueError("step_number cannot exceed total_steps")
 
         return step_number, total_steps
@@ -445,6 +451,11 @@ class ParameterValidator:
         """
         Validate a list parameter that should contain integers.
 
+        SECURITY IMPROVEMENT (Task #2): Replaced sys.maxsize range with reasonable bounds (1-1000)
+        for dependency and contradiction lists. Since these values reference step numbers,
+        they should be constrained to the same bounds as step numbers to prevent resource
+        exhaustion and maintain logical consistency.
+
         Args:
             int_list: The list to validate (or None)
             param_name: Name of the parameter for error messages
@@ -453,12 +464,13 @@ class ParameterValidator:
             Validated list or None
 
         Raises:
-            ValueError: If list is invalid
+            ValueError: If list is invalid or contains out-of-bounds values
         """
-        import sys
+        # SECURITY: For dependencies and contradicts, use reasonable bounds (1-1000) since they reference step numbers
+        # Previously used sys.maxsize range which was a security vulnerability
         return self.validate_list_param(
             int_list, param_name, int,
-            max_items=50, item_range=(-sys.maxsize, sys.maxsize)
+            max_items=50, item_range=(1, 1000)
         )
 
     def validate_string_list_param(self, str_list: Optional[List[str]], param_name: str) -> Optional[List[str]]:

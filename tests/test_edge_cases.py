@@ -39,38 +39,44 @@ class TestInputValidationEdgeCases:
         self.cot = ChainOfThought()
     
     def test_extreme_step_numbers(self):
-        """Test handling of extreme step numbers."""
-        # Very large step number
-        result = self.cot.add_step(
-            "Large step test",
-            step_number=sys.maxsize,
-            total_steps=sys.maxsize,
-            next_step_needed=False
-        )
-        assert result["status"] == "success"
-        assert result["step_processed"] == sys.maxsize
-        
-        # Zero step number
-        self.cot.clear_chain()
-        result = self.cot.add_step(
-            "Zero step test",
-            step_number=0,
-            total_steps=1,
-            next_step_needed=False
-        )
-        assert result["status"] == "success"
-        assert result["step_processed"] == 0
-        
-        # Negative step number
-        self.cot.clear_chain()
-        result = self.cot.add_step(
-            "Negative step test",
-            step_number=-1,
-            total_steps=1,
-            next_step_needed=False
-        )
-        assert result["status"] == "success"
-        assert result["step_processed"] == -1
+        """Test that extreme step numbers are rejected for security."""
+        import sys
+
+        # Very large step number (should be rejected)
+        with pytest.raises(ValueError, match="step_number must be between 1 and 1000"):
+            self.cot.add_step(
+                "Large step test",
+                step_number=sys.maxsize,
+                total_steps=sys.maxsize,
+                next_step_needed=False
+            )
+
+        # Zero step number (should be rejected)
+        with pytest.raises(ValueError, match="step_number must be between 1 and 1000"):
+            self.cot.add_step(
+                "Zero step test",
+                step_number=0,
+                total_steps=1,
+                next_step_needed=False
+            )
+
+        # Negative step number (should be rejected)
+        with pytest.raises(ValueError, match="step_number must be between 1 and 1000"):
+            self.cot.add_step(
+                "Negative step test",
+                step_number=-1,
+                total_steps=1,
+                next_step_needed=False
+            )
+
+        # Step number above 1000 (should be rejected)
+        with pytest.raises(ValueError, match="step_number must be between 1 and 1000"):
+            self.cot.add_step(
+                "Above 1000 step test",
+                step_number=1001,
+                total_steps=1001,
+                next_step_needed=False
+            )
     
     def test_extreme_confidence_values(self):
         """Test handling of extreme confidence values."""
@@ -255,10 +261,11 @@ class TestInputValidationEdgeCases:
         large_dependencies = list(range(1, 10000))  # 9999 dependencies
         large_contradictions = list(range(10000, 20000))  # 9999 contradictions
 
+        # Use valid step numbers within new bounds
         try:
             result = self.cot.add_step(
                 "Large dependencies test",
-                10000, 10000, False,
+                500, 1000, False,  # Valid step numbers within 1-1000 range
                 dependencies=large_dependencies,
                 contradicts=large_contradictions
             )
@@ -388,17 +395,33 @@ class TestJSONSerializationEdgeCases:
     
     def test_handler_json_output_special_cases(self):
         """Test handler JSON output with special cases."""
-        # Test with very large numbers
+        # Test with large but reasonable numbers (within security bounds)
         result_json = chain_of_thought_step_handler(
             thought="Large numbers test",
-            step_number=sys.maxsize,
-            total_steps=sys.maxsize,
+            step_number=1000,  # Maximum allowed value
+            total_steps=1000,
             next_step_needed=False
         )
-        
+
         # Should produce valid JSON
         result = json.loads(result_json)
-        assert result["step_processed"] == sys.maxsize
+        assert result["step_processed"] == 1000
+
+        # Test that very large numbers are rejected
+        try:
+            result_json = chain_of_thought_step_handler(
+                thought="Too large numbers test",
+                step_number=sys.maxsize,
+                total_steps=sys.maxsize,
+                next_step_needed=False
+            )
+            # If no error, check that it was handled appropriately
+            result = json.loads(result_json)
+            # Either step_processed should be bounded or there should be an error
+            assert "step_processed" not in result or result["step_processed"] <= 1000
+        except (ValueError, KeyError):
+            # Expected behavior for security bounds validation
+            pass
         
         # Test with unicode content
         unicode_thought = "Unicode test: 🚀 中文 العربية"
