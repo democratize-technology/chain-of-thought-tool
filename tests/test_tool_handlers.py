@@ -23,16 +23,19 @@ from chain_of_thought.core import (
     _chain_processor,
     _hypothesis_generator,
     _assumption_mapper,
-    _confidence_calibrator
+    _confidence_calibrator,
+    get_global_rate_limiter
 )
 
 
 class TestChainOfThoughtStepHandler:
     """Test chain_of_thought_step_handler function."""
-    
+
     def setup_method(self):
-        """Clear the global chain processor before each test."""
+        """Clear the global chain processor and rate limiter before each test."""
         _chain_processor.clear_chain()
+        # Reset rate limiter to prevent test interference
+        get_global_rate_limiter().reset_client("default")
     
     def test_valid_step_addition(self):
         """Test adding a valid step through handler."""
@@ -127,10 +130,12 @@ class TestChainOfThoughtStepHandler:
 
 class TestGetChainSummaryHandler:
     """Test get_chain_summary_handler function."""
-    
+
     def setup_method(self):
-        """Clear the global chain processor before each test."""
+        """Clear the global chain processor and rate limiter before each test."""
         _chain_processor.clear_chain()
+        # Reset rate limiter to prevent test interference
+        get_global_rate_limiter().reset_client("default")
     
     def test_empty_chain_summary(self):
         """Test getting summary of empty chain."""
@@ -179,10 +184,12 @@ class TestGetChainSummaryHandler:
 
 class TestClearChainHandler:
     """Test clear_chain_handler function."""
-    
+
     def setup_method(self):
         """Setup chain with some steps for testing."""
         _chain_processor.clear_chain()
+        # Reset rate limiter to prevent test interference
+        get_global_rate_limiter().reset_client("default")
         _chain_processor.add_step("Test step", 1, 1, False)
     
     def test_clear_chain_success(self):
@@ -218,7 +225,12 @@ class TestClearChainHandler:
 
 class TestGenerateHypothesesHandler:
     """Test generate_hypotheses_handler function."""
-    
+
+    def setup_method(self):
+        """Reset rate limiter before each test."""
+        # Reset rate limiter to prevent test interference
+        get_global_rate_limiter().reset_client("default")
+
     def test_valid_hypothesis_generation(self):
         """Test generating hypotheses with valid input."""
         result_json = generate_hypotheses_handler(
@@ -291,7 +303,12 @@ class TestGenerateHypothesesHandler:
 
 class TestMapAssumptionsHandler:
     """Test map_assumptions_handler function."""
-    
+
+    def setup_method(self):
+        """Reset rate limiter before each test."""
+        # Reset rate limiter to prevent test interference
+        get_global_rate_limiter().reset_client("default")
+
     def test_valid_assumption_mapping(self):
         """Test mapping assumptions with valid input."""
         result_json = map_assumptions_handler(
@@ -363,7 +380,12 @@ class TestMapAssumptionsHandler:
 
 class TestCalibrateConfidenceHandler:
     """Test calibrate_confidence_handler function."""
-    
+
+    def setup_method(self):
+        """Reset rate limiter before each test."""
+        # Reset rate limiter to prevent test interference
+        get_global_rate_limiter().reset_client("default")
+
     def test_valid_confidence_calibration(self):
         """Test confidence calibration with valid input."""
         result_json = calibrate_confidence_handler(
@@ -451,10 +473,12 @@ class TestCalibrateConfidenceHandler:
 
 class TestToolHandlerIntegration:
     """Test integration between tool handlers."""
-    
+
     def setup_method(self):
-        """Clear global state before each test."""
+        """Clear global state and rate limiter before each test."""
         _chain_processor.clear_chain()
+        # Reset rate limiter to prevent test interference
+        get_global_rate_limiter().reset_client("default")
     
     def test_chain_workflow_integration(self):
         """Test complete workflow using chain-related handlers."""

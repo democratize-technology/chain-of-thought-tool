@@ -19,6 +19,7 @@ from chain_of_thought.core import (
     StopReasonHandler,
     ChainOfThought
 )
+from chain_of_thought.security import SecurityConfig, RequestValidator
 
 
 class MockBedrockClient:
@@ -86,7 +87,22 @@ class TestAsyncChainOfThoughtProcessor:
     def setup_method(self):
         """Set up test fixtures."""
         self.conversation_id = "test_async_conversation"
-        self.processor = AsyncChainOfThoughtProcessor(self.conversation_id)
+
+        # Create permissive security config for testing
+        test_security_config = SecurityConfig(
+            allowed_model_patterns=[r'^test-model$', r'^.*$'],  # Allow test models
+            allowed_top_level_params={
+                'messages', 'modelId', 'system', 'toolConfig', 'inferenceConfig',
+                'guardrailConfig', 'additionalModelRequestFields', 'temperature',
+                'maxTokens', 'topP', 'stopSequences'  # Allow test parameters
+            }
+        )
+        test_validator = RequestValidator(test_security_config)
+
+        self.processor = AsyncChainOfThoughtProcessor(
+            self.conversation_id,
+            request_validator=test_validator
+        )
     
     def test_initialization(self):
         """Test processor initialization."""
@@ -252,8 +268,19 @@ class TestAsyncChainOfThoughtProcessor:
         # Create a handler that will throw an error
         error_handler = MockStopReasonHandler()
         error_handler.tool_results["chain_of_thought_step"] = None  # Will cause KeyError
-        
-        processor = AsyncChainOfThoughtProcessor("test", error_handler)
+
+        # Create permissive security config for testing
+        test_security_config = SecurityConfig(
+            allowed_model_patterns=[r'^test-model$', r'^.*$'],  # Allow test models
+            allowed_top_level_params={
+                'messages', 'modelId', 'system', 'toolConfig', 'inferenceConfig',
+                'guardrailConfig', 'additionalModelRequestFields', 'temperature',
+                'maxTokens', 'topP', 'stopSequences'  # Allow test parameters
+            }
+        )
+        test_validator = RequestValidator(test_security_config)
+
+        processor = AsyncChainOfThoughtProcessor("test", error_handler, request_validator=test_validator)
         
         # Override execute_tool_call to raise an exception
         async def failing_execute(tool_name, tool_args):
