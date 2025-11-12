@@ -6,8 +6,8 @@ with open("README.md", "r", encoding="utf-8") as fh:
 setup(
     name="chain-of-thought-tool",
     version="0.1.0",
-    author="Your Name",
-    author_email="your-email@example.com",
+    author="Erin Green",
+    author_email="erin@democratize.technology",
     description="A lightweight Chain of Thought reasoning tool for LLM function calling",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -37,7 +37,7 @@ setup(
     },
     keywords="llm, function-calling, reasoning, ai, tools, chain-of-thought, cot",
     project_urls={
-        "Source": "https://github.com/your-username/chain-of-thought-tool",
-        "Bug Reports": "https://github.com/your-username/chain-of-thought-tool/issues",
+        "Source": "https://github.com/democratize-technology/chain-of-thought-tool",
+        "Bug Reports": "https://github.com/democratize-technology/chain-of-thought-tool/issues",
     },
 )
