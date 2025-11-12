@@ -187,10 +187,8 @@ class ParameterValidator:
             raise TypeError(f"step_number must be an integer, got {type(step_number).__name__}")
 
         # Bounds validation to prevent resource exhaustion
-        if step_number < 1:
-            raise ValueError("step_number must be positive")
-        if step_number > 1000:
-            raise ValueError("step_number cannot exceed 1000 to prevent resource exhaustion")
+        if step_number < 1 or step_number > 1000:
+            raise ValueError("step_number must be between 1 and 1000")
 
         return step_number
 
@@ -266,6 +264,193 @@ class ParameterValidator:
             validated_items.append(sanitized_item)
 
         return validated_items
+
+    def validate_input(self,
+                      thought: str,
+                      step_number: int,
+                      total_steps: int,
+                      next_step_needed: bool,
+                      reasoning_stage: str = "Analysis",
+                      confidence: float = 0.8,
+                      dependencies: Optional[List[int]] = None,
+                      contradicts: Optional[List[int]] = None,
+                      evidence: Optional[List[str]] = None,
+                      assumptions: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Validate all input parameters for chain-of-thought processing.
+
+        This method consolidates all parameter validation logic and returns
+        a dictionary of validated parameters for use in business logic.
+
+        Args:
+            thought: The thought text to validate
+            step_number: The current step number
+            total_steps: The total number of steps expected
+            next_step_needed: Whether another step is needed
+            reasoning_stage: The current reasoning stage
+            confidence: Confidence level (0.0 to 1.0)
+            dependencies: List of step dependencies
+            contradicts: List of contradicted steps
+            evidence: List of evidence items
+            assumptions: List of assumptions
+
+        Returns:
+            Dictionary containing all validated parameters
+
+        Raises:
+            TypeError: If any parameter has wrong type
+            ValueError: If any parameter has invalid value
+        """
+        # Validate required parameters using existing methods
+        validated_thought = self.validate_thought_param(thought)
+        validated_step_number = self.validate_step_number(step_number)
+        validated_total_steps = self.validate_step_number(total_steps)  # Reuse step validation
+        validated_confidence = self.validate_confidence_param(confidence)
+        validated_reasoning_stage = self._validate_reasoning_stage(reasoning_stage)
+        validated_next_step_needed = self._validate_boolean_param(next_step_needed, "next_step_needed")
+
+        # Validate optional parameters (handle None values)
+        validated_dependencies = self._validate_optional_dependencies(dependencies)
+        validated_contradicts = self._validate_optional_contradicts(contradicts)
+        validated_evidence = self._validate_optional_string_list(evidence, "evidence")
+        validated_assumptions = self._validate_optional_string_list(assumptions, "assumptions")
+
+        # Additional logical validation
+        self._validate_step_relationships(validated_step_number, validated_total_steps)
+
+        return {
+            "thought": validated_thought,
+            "step_number": validated_step_number,
+            "total_steps": validated_total_steps,
+            "next_step_needed": validated_next_step_needed,
+            "reasoning_stage": validated_reasoning_stage,
+            "confidence": validated_confidence,
+            "dependencies": validated_dependencies,
+            "contradicts": validated_contradicts,
+            "evidence": validated_evidence,
+            "assumptions": validated_assumptions
+        }
+
+    def _validate_reasoning_stage(self, reasoning_stage: str) -> str:
+        """
+        Validate the reasoning_stage parameter.
+
+        Args:
+            reasoning_stage: The reasoning stage to validate
+
+        Returns:
+            The validated reasoning stage
+
+        Raises:
+            TypeError: If reasoning_stage is not a string
+            ValueError: If reasoning_stage is empty or contains invalid characters
+        """
+        if not isinstance(reasoning_stage, str):
+            raise TypeError(f"reasoning_stage must be a string, got {type(reasoning_stage).__name__}")
+
+        # Sanitize the input
+        sanitized_stage = self._sanitize_unicode_string(reasoning_stage)
+
+        if not sanitized_stage or sanitized_stage.isspace():
+            raise ValueError("reasoning_stage cannot be empty or whitespace only")
+
+        # Allow only alphanumeric, spaces, and basic punctuation
+        if not re.match(r'^[a-zA-Z0-9\s\-_,.]+$', sanitized_stage):
+            raise ValueError("reasoning_stage can only contain letters, numbers, spaces, hyphens, underscores, commas, and periods")
+
+        return html.escape(sanitized_stage.strip())
+
+    def _validate_boolean_param(self, value: bool, param_name: str) -> bool:
+        """
+        Validate a boolean parameter.
+
+        Args:
+            value: The boolean value to validate
+            param_name: Name of the parameter for error messages
+
+        Returns:
+            The validated boolean value
+
+        Raises:
+            TypeError: If value is not a boolean
+        """
+        if not isinstance(value, bool):
+            raise TypeError(f"{param_name} must be a boolean, got {type(value).__name__}")
+
+        return value
+
+    def _validate_optional_dependencies(self, dependencies: Optional[List[int]]) -> List[int]:
+        """
+        Validate optional dependencies parameter.
+
+        Args:
+            dependencies: List of step dependencies or None
+
+        Returns:
+            Validated dependencies list (empty list if None)
+
+        Raises:
+            TypeError: If dependencies is not a list or None
+            ValueError: If dependencies contain invalid values
+        """
+        if dependencies is None:
+            return []
+
+        return self.validate_dependencies_param(dependencies)
+
+    def _validate_optional_contradicts(self, contradicts: Optional[List[int]]) -> List[int]:
+        """
+        Validate optional contradicts parameter.
+
+        Args:
+            contradicts: List of contradicted steps or None
+
+        Returns:
+            Validated contradicts list (empty list if None)
+
+        Raises:
+            TypeError: If contradicts is not a list or None
+            ValueError: If contradicts contain invalid values
+        """
+        if contradicts is None:
+            return []
+
+        # Reuse the same validation logic as dependencies
+        return self.validate_dependencies_param(contradicts)
+
+    def _validate_optional_string_list(self, items: Optional[List[str]], param_name: str) -> List[str]:
+        """
+        Validate optional string list parameter.
+
+        Args:
+            items: List of strings or None
+            param_name: Name of the parameter for error messages
+
+        Returns:
+            Validated string list (empty list if None)
+
+        Raises:
+            TypeError: If items is not a list or None
+            ValueError: If items contain invalid values
+        """
+        if items is None:
+            return []
+
+        return self.validate_list_input(items, param_name)
+
+    def _validate_step_relationships(self, step_number: int, total_steps: int) -> None:
+        """
+        Validate logical relationships between step parameters.
+
+        Args:
+            step_number: Current step number
+            total_steps: Total expected steps
+
+        Raises:
+            ValueError: If step relationships are invalid
+        """
+        if step_number > total_steps:
+            raise ValueError(f"step_number ({step_number}) cannot be greater than total_steps ({total_steps})")
 
 
 class ChainOfThought:

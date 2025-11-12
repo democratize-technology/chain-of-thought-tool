@@ -328,23 +328,18 @@ class TestChainOfThoughtEdgeCases:
     
     def test_add_step_invalid_confidence(self):
         """Test adding step with invalid confidence values."""
-        # Confidence should be clamped or handled appropriately
-        # The current implementation doesn't validate, but we test the behavior
-        result = self.cot.add_step(
-            "Test step",
-            1, 1, False,
-            confidence=1.5  # > 1.0
-        )
-        
-        assert result["status"] == "success"
-        assert result["confidence"] == 1.5  # Current implementation allows this
+        # Confidence validation should reject values > 1.0
+        with pytest.raises(ValueError, match="confidence must be between 0.0 and 1.0"):
+            self.cot.add_step(
+                "Test step",
+                1, 1, False,
+                confidence=1.5  # > 1.0
+            )
     
     def test_empty_thought_content(self):
-        """Test adding step with empty thought content."""
-        result = self.cot.add_step("", 1, 1, False)
-        
-        assert result["status"] == "success"
-        assert self.cot.steps[0].thought == ""
+        """Test that empty thought content is rejected for security."""
+        with pytest.raises(ValueError, match="thought cannot be empty or whitespace only"):
+            self.cot.add_step("", 1, 1, False)
     
     def test_negative_step_numbers(self):
         """Test that negative step numbers are rejected for security."""
