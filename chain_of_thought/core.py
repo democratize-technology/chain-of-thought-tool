@@ -3,10 +3,12 @@ Chain of Thought Tool - Core Implementation
 """
 from typing import Dict, List, Optional, Any, Callable, Awaitable
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import asyncio
 import threading
+import weakref
+import time
 from abc import ABC, abstractmethod
 from .validators import ParameterValidator
 
@@ -987,49 +989,311 @@ class ConfidenceCalibrator:
 # Security helper function for safe JSON serialization
 def _safe_json_dumps(data: Any, indent: int = 2) -> str:
     """
-    Safely serialize data to JSON, preventing injection attacks.
-    
+    Safely serialize data to JSON with strict security controls.
+
+    Implements defense-in-depth approach with multiple security layers:
+    1. Whitelist-only type checking
+    2. Sensitive key filtering
+    3. Dangerous content detection
+    4. Generic error handling (no information disclosure)
+
     Args:
         data: Data to serialize
         indent: JSON indentation level
-        
+
     Returns:
-        Safe JSON string
-        
-    Raises:
-        ValueError: If data cannot be safely serialized
+        Safe JSON string with no sensitive data exposed
     """
     try:
-        # Validate that we're dealing with safe data structures
-        if not isinstance(data, (dict, list, str, int, float, bool, type(None))):
-            # Convert dataclass or other objects safely
-            if hasattr(data, '__dict__'):
-                data = asdict(data) if hasattr(data, '__dataclass_fields__') else data.__dict__
-            else:
-                data = str(data)
-        
-        # Use secure JSON parameters to prevent injection
-        return json.dumps(
-            data, 
-            indent=indent,
-            ensure_ascii=True,  # Prevent Unicode injection attacks
-            separators=(',', ': '),  # Prevent whitespace injection
-            sort_keys=True  # Consistent output, prevent structure manipulation
-        )
-    except (TypeError, ValueError, OverflowError) as e:
-        # Handle serialization errors gracefully
-        error_data = {
-            "status": "error",
-            "message": "JSON serialization failed",
-            "error_type": type(e).__name__
+        # Define whitelist of safe types (defense-in-depth)
+        SAFE_TYPES = (dict, list, str, int, float, bool, type(None))
+
+        # Define sensitive keys to filter (case-insensitive)
+        SENSITIVE_KEYS = {
+            'password', 'passwd', 'pwd', 'secret', 'token', 'key', 'apikey', 'api_key',
+            'auth', 'authorization', 'auth_token', 'session', 'session_id',
+            'credit_card', 'card', 'ssn', 'social_security', 'pin',
+            'credential', 'private', 'confidential', 'internal'
         }
-        return json.dumps(
-            error_data,
+
+        # Define dangerous content patterns
+        DANGEROUS_PATTERNS = {
+            '__import__', 'eval(', 'exec(', 'open(', 'file(', 'input(',
+            'subprocess', 'os.system', 'shell_exec', 'DROP TABLE', 'SELECT *',
+            '<script', 'javascript:', 'data:', 'vbscript:', 'onload=', 'onerror='
+        }
+
+        def sanitize(obj, depth=0):
+            """
+            Recursively sanitize object for safe serialization.
+            Uses whitelist approach with depth limiting to prevent recursion attacks.
+            """
+            # Prevent deep recursion attacks
+            if depth > 50:
+                return {"status": "error", "message": "Data too deep"}
+
+            if isinstance(obj, SAFE_TYPES):
+                if isinstance(obj, dict):
+                    sanitized_dict = {}
+                    for key, value in obj.items():
+                        # Filter sensitive keys (case-insensitive)
+                        key_lower = str(key).lower()
+                        is_sensitive = any(sensitive in key_lower for sensitive in SENSITIVE_KEYS)
+
+                        if is_sensitive:
+                            # Replace sensitive values with placeholder
+                            sanitized_dict[key] = "[REDACTED]"
+                        else:
+                            # Recursively sanitize values
+                            sanitized_dict[key] = sanitize(value, depth + 1)
+
+                    return sanitized_dict
+
+                elif isinstance(obj, list):
+                    # Sanitize list elements recursively
+                    try:
+                        return [sanitize(item, depth + 1) for item in obj[:100]]  # Limit list size
+                    except Exception:
+                        return [{"status": "error", "message": "List processing failed"}]
+
+                elif isinstance(obj, str):
+                    # Check for dangerous content in strings
+                    content_lower = obj.lower()
+                    for pattern in DANGEROUS_PATTERNS:
+                        if pattern in content_lower:
+                            return "[FILTERED_CONTENT]"
+                    return obj[:1000]  # Limit string length
+
+                elif isinstance(obj, (int, float)):
+                    # Check for dangerous numeric values
+                    if isinstance(obj, float):
+                        if obj != obj:  # NaN
+                            return 0.0
+                        if obj in (float('inf'), float('-inf')):  # Infinity
+                            return 0.0
+                    return obj
+
+                elif isinstance(obj, bool) or obj is None:
+                    return obj
+
+            else:
+                # Convert unknown objects to safe string representation
+                # NEVER expose internal structure or methods
+                obj_type = type(obj).__name__
+                return f"[Object: {obj_type}]"
+
+        # Apply sanitization
+        sanitized_data = sanitize(data)
+
+        # Final security check on result size
+        json_string = json.dumps(
+            sanitized_data,
             indent=indent,
             ensure_ascii=True,
             separators=(',', ': '),
             sort_keys=True
         )
+
+        # Prevent DoS through huge JSON output
+        if len(json_string) > 100000:  # 100KB limit
+            return json.dumps({
+                "status": "error",
+                "message": "Data processing failed"
+            })
+
+        return json_string
+
+    except Exception:
+        # NEVER expose internal error details - security principle
+        # No information disclosure about internal errors, types, or stack traces
+        return json.dumps({
+            "status": "error",
+            "message": "Data processing failed"
+        })
+
+
+class RateLimiter:
+    """
+    Thread-safe rate limiting to prevent DoS attacks on handler functions.
+
+    Implements token bucket algorithm with multiple time windows:
+    - Burst limit: Immediate consecutive requests
+    - Per-minute limit: Requests within 1-minute window
+    - Per-hour limit: Requests within 1-hour window
+
+    Each client is tracked separately to ensure isolation.
+    """
+
+    def __init__(self, max_requests_per_minute: int = 60, max_requests_per_hour: int = 1000, max_burst_size: int = 10):
+        """
+        Initialize rate limiter with configurable limits.
+
+        Args:
+            max_requests_per_minute: Maximum requests per minute per client
+            max_requests_per_hour: Maximum requests per hour per client
+            max_burst_size: Maximum consecutive immediate requests per client
+        """
+        self.max_requests_per_minute = max_requests_per_minute
+        self.max_requests_per_hour = max_requests_per_hour
+        self.max_burst_size = max_burst_size
+
+        # Track request counts and timestamps per client
+        self._request_counts: Dict[str, int] = {}  # Current burst counts
+        self._request_timestamps: Dict[str, List[float]] = {}  # Timestamps for sliding windows
+        self._lock = threading.RLock()  # Thread-safe access
+
+    def _cleanup_old_timestamps(self, client_id: str, current_time: float) -> None:
+        """Remove timestamps older than 1 hour from tracking."""
+        if client_id not in self._request_timestamps:
+            return
+
+        # Remove timestamps older than 1 hour
+        one_hour_ago = current_time - 3600.0
+        timestamps = self._request_timestamps[client_id]
+        self._request_timestamps[client_id] = [
+            ts for ts in timestamps if ts > one_hour_ago
+        ]
+
+        # Clean up empty timestamp lists
+        if not self._request_timestamps[client_id]:
+            del self._request_timestamps[client_id]
+
+    def _get_minute_count(self, client_id: str, current_time: float) -> int:
+        """Count requests in the last minute for a client."""
+        if client_id not in self._request_timestamps:
+            return 0
+
+        one_minute_ago = current_time - 60.0
+        return sum(1 for ts in self._request_timestamps[client_id] if ts > one_minute_ago)
+
+    def _get_hour_count(self, client_id: str, current_time: float) -> int:
+        """Count requests in the last hour for a client."""
+        if client_id not in self._request_timestamps:
+            return 0
+
+        one_hour_ago = current_time - 3600.0
+        return sum(1 for ts in self._request_timestamps[client_id] if ts > one_hour_ago)
+
+    def check_rate_limit(self, client_id: str = "default") -> bool:
+        """
+        Check if a request from the client should be allowed.
+
+        Args:
+            client_id: Unique identifier for the client (IP address, session ID, etc.)
+
+        Returns:
+            True if request should be allowed, False if rate limited
+        """
+        current_time = time.time()
+
+        with self._lock:
+            # Clean up old timestamps
+            self._cleanup_old_timestamps(client_id, current_time)
+
+            # Check burst limit (immediate consecutive requests)
+            current_burst = self._request_counts.get(client_id, 0)
+            if current_burst >= self.max_burst_size:
+                return False
+
+            # Check per-minute limit
+            minute_count = self._get_minute_count(client_id, current_time)
+            if minute_count >= self.max_requests_per_minute:
+                return False
+
+            # Check per-hour limit
+            hour_count = self._get_hour_count(client_id, current_time)
+            if hour_count >= self.max_requests_per_hour:
+                return False
+
+            # Request is allowed - update tracking
+            self._request_counts[client_id] = current_burst + 1
+
+            # Add timestamp for sliding window tracking
+            if client_id not in self._request_timestamps:
+                self._request_timestamps[client_id] = []
+            self._request_timestamps[client_id].append(current_time)
+
+            return True
+
+    def get_retry_after(self, client_id: str = "default") -> Optional[int]:
+        """
+        Get suggested retry-after seconds for a rate-limited client.
+
+        Args:
+            client_id: Unique identifier for the client
+
+        Returns:
+            Seconds to wait before retry, or None if not rate limited
+        """
+        current_time = time.time()
+
+        with self._lock:
+            # Check burst limit
+            current_burst = self._request_counts.get(client_id, 0)
+            if current_burst >= self.max_burst_size:
+                return 1  # Very short delay for burst limit
+
+            # Check minute limit
+            minute_count = self._get_minute_count(client_id, current_time)
+            if minute_count >= self.max_requests_per_minute:
+                if client_id in self._request_timestamps and self._request_timestamps[client_id]:
+                    oldest_timestamp = min(self._request_timestamps[client_id])
+                    retry_after = int(60 - (current_time - oldest_timestamp)) + 1
+                    return max(retry_after, 1)
+
+            # Check hour limit
+            hour_count = self._get_hour_count(client_id, current_time)
+            if hour_count >= self.max_requests_per_hour:
+                if client_id in self._request_timestamps and self._request_timestamps[client_id]:
+                    oldest_timestamp = min(self._request_timestamps[client_id])
+                    retry_after = int(3600 - (current_time - oldest_timestamp)) + 1
+                    return max(retry_after, 60)  # At least 1 minute
+
+            return None  # Not rate limited
+
+    def reset_client(self, client_id: str = "default") -> None:
+        """Reset rate limiting tracking for a specific client."""
+        with self._lock:
+            if client_id in self._request_counts:
+                del self._request_counts[client_id]
+            if client_id in self._request_timestamps:
+                del self._request_timestamps[client_id]
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get current rate limiting statistics."""
+        with self._lock:
+            return {
+                "active_clients": len(self._request_counts),
+                "total_tracked_timestamps": sum(len(timestamps) for timestamps in self._request_timestamps.values()),
+                "max_requests_per_minute": self.max_requests_per_minute,
+                "max_requests_per_hour": self.max_requests_per_hour,
+                "max_burst_size": self.max_burst_size
+            }
+
+
+# Global rate limiter instance
+_global_rate_limiter: Optional[RateLimiter] = None
+_rate_limiter_lock = threading.Lock()
+
+
+def get_global_rate_limiter() -> RateLimiter:
+    """Get or create the global rate limiter instance."""
+    global _global_rate_limiter
+
+    if _global_rate_limiter is None:
+        with _rate_limiter_lock:
+            if _global_rate_limiter is None:  # Double-check
+                _global_rate_limiter = RateLimiter()
+
+    return _global_rate_limiter
+
+
+def set_global_rate_limiter(limiter: RateLimiter) -> None:
+    """Set a custom global rate limiter instance."""
+    global _global_rate_limiter
+
+    with _rate_limiter_lock:
+        _global_rate_limiter = limiter
 
 
 # Initialize default service factories now that all classes are defined
@@ -1042,17 +1306,32 @@ _assumption_mapper = _default_registry.get_service('assumption_mapper')
 _confidence_calibrator = _default_registry.get_service('confidence_calibrator')
 
 
-def create_chain_of_thought_step_handler(registry: Optional[ServiceRegistry] = None):
+def create_chain_of_thought_step_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
     """
-    Create a chain_of_thought_step handler with dependency injection.
+    Create a chain_of_thought_step handler with dependency injection and rate limiting.
 
     Args:
         registry: Service registry to use. If None, uses default global registry.
+        rate_limiter: Rate limiter to use. If None, uses global rate limiter.
+        client_id: Client identifier for rate limiting.
 
     Returns:
         Handler function
     """
+    # Use provided rate limiter or global one
+    limiter = rate_limiter or get_global_rate_limiter()
+
     def handler(**kwargs) -> str:
+        # Check rate limit first
+        if not limiter.check_rate_limit(client_id):
+            retry_after = limiter.get_retry_after(client_id)
+            return _safe_json_dumps({
+                "status": "error",
+                "message": f"Rate limit exceeded. Retry after {retry_after or 60} seconds.",
+                "error_type": "rate_limit_exceeded",
+                "retry_after": retry_after
+            }, indent=2)
+
         try:
             service_registry = registry or get_service_registry()
             chain_processor = service_registry.get_service('chain_of_thought')
@@ -1063,17 +1342,31 @@ def create_chain_of_thought_step_handler(registry: Optional[ServiceRegistry] = N
     return handler
 
 
-def create_get_chain_summary_handler(registry: Optional[ServiceRegistry] = None):
+def create_get_chain_summary_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
     """
-    Create a get_chain_summary handler with dependency injection.
+    Create a get_chain_summary handler with dependency injection and rate limiting.
 
     Args:
         registry: Service registry to use. If None, uses default global registry.
+        rate_limiter: Rate limiter to use. If None, uses global rate limiter.
+        client_id: Client identifier for rate limiting.
 
     Returns:
         Handler function
     """
+    limiter = rate_limiter or get_global_rate_limiter()
+
     def handler() -> str:
+        # Check rate limit first
+        if not limiter.check_rate_limit(client_id):
+            retry_after = limiter.get_retry_after(client_id)
+            return _safe_json_dumps({
+                "status": "error",
+                "message": f"Rate limit exceeded. Retry after {retry_after or 60} seconds.",
+                "error_type": "rate_limit_exceeded",
+                "retry_after": retry_after
+            }, indent=2)
+
         try:
             service_registry = registry or get_service_registry()
             chain_processor = service_registry.get_service('chain_of_thought')
@@ -1084,17 +1377,31 @@ def create_get_chain_summary_handler(registry: Optional[ServiceRegistry] = None)
     return handler
 
 
-def create_clear_chain_handler(registry: Optional[ServiceRegistry] = None):
+def create_clear_chain_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
     """
-    Create a clear_chain handler with dependency injection.
+    Create a clear_chain handler with dependency injection and rate limiting.
 
     Args:
         registry: Service registry to use. If None, uses default global registry.
+        rate_limiter: Rate limiter to use. If None, uses global rate limiter.
+        client_id: Client identifier for rate limiting.
 
     Returns:
         Handler function
     """
+    limiter = rate_limiter or get_global_rate_limiter()
+
     def handler() -> str:
+        # Check rate limit first
+        if not limiter.check_rate_limit(client_id):
+            retry_after = limiter.get_retry_after(client_id)
+            return _safe_json_dumps({
+                "status": "error",
+                "message": f"Rate limit exceeded. Retry after {retry_after or 60} seconds.",
+                "error_type": "rate_limit_exceeded",
+                "retry_after": retry_after
+            }, indent=2)
+
         try:
             service_registry = registry or get_service_registry()
             chain_processor = service_registry.get_service('chain_of_thought')
@@ -1105,17 +1412,31 @@ def create_clear_chain_handler(registry: Optional[ServiceRegistry] = None):
     return handler
 
 
-def create_generate_hypotheses_handler(registry: Optional[ServiceRegistry] = None):
+def create_generate_hypotheses_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
     """
-    Create a generate_hypotheses handler with dependency injection.
+    Create a generate_hypotheses handler with dependency injection and rate limiting.
 
     Args:
         registry: Service registry to use. If None, uses default global registry.
+        rate_limiter: Rate limiter to use. If None, uses global rate limiter.
+        client_id: Client identifier for rate limiting.
 
     Returns:
         Handler function
     """
+    limiter = rate_limiter or get_global_rate_limiter()
+
     def handler(**kwargs) -> str:
+        # Check rate limit first
+        if not limiter.check_rate_limit(client_id):
+            retry_after = limiter.get_retry_after(client_id)
+            return _safe_json_dumps({
+                "status": "error",
+                "message": f"Rate limit exceeded. Retry after {retry_after or 60} seconds.",
+                "error_type": "rate_limit_exceeded",
+                "retry_after": retry_after
+            }, indent=2)
+
         try:
             service_registry = registry or get_service_registry()
             hypothesis_generator = service_registry.get_service('hypothesis_generator')
@@ -1126,17 +1447,31 @@ def create_generate_hypotheses_handler(registry: Optional[ServiceRegistry] = Non
     return handler
 
 
-def create_map_assumptions_handler(registry: Optional[ServiceRegistry] = None):
+def create_map_assumptions_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
     """
-    Create a map_assumptions handler with dependency injection.
+    Create a map_assumptions handler with dependency injection and rate limiting.
 
     Args:
         registry: Service registry to use. If None, uses default global registry.
+        rate_limiter: Rate limiter to use. If None, uses global rate limiter.
+        client_id: Client identifier for rate limiting.
 
     Returns:
         Handler function
     """
+    limiter = rate_limiter or get_global_rate_limiter()
+
     def handler(**kwargs) -> str:
+        # Check rate limit first
+        if not limiter.check_rate_limit(client_id):
+            retry_after = limiter.get_retry_after(client_id)
+            return _safe_json_dumps({
+                "status": "error",
+                "message": f"Rate limit exceeded. Retry after {retry_after or 60} seconds.",
+                "error_type": "rate_limit_exceeded",
+                "retry_after": retry_after
+            }, indent=2)
+
         try:
             service_registry = registry or get_service_registry()
             assumption_mapper = service_registry.get_service('assumption_mapper')
@@ -1147,17 +1482,31 @@ def create_map_assumptions_handler(registry: Optional[ServiceRegistry] = None):
     return handler
 
 
-def create_calibrate_confidence_handler(registry: Optional[ServiceRegistry] = None):
+def create_calibrate_confidence_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
     """
-    Create a calibrate_confidence handler with dependency injection.
+    Create a calibrate_confidence handler with dependency injection and rate limiting.
 
     Args:
         registry: Service registry to use. If None, uses default global registry.
+        rate_limiter: Rate limiter to use. If None, uses global rate limiter.
+        client_id: Client identifier for rate limiting.
 
     Returns:
         Handler function
     """
+    limiter = rate_limiter or get_global_rate_limiter()
+
     def handler(**kwargs) -> str:
+        # Check rate limit first
+        if not limiter.check_rate_limit(client_id):
+            retry_after = limiter.get_retry_after(client_id)
+            return _safe_json_dumps({
+                "status": "error",
+                "message": f"Rate limit exceeded. Retry after {retry_after or 60} seconds.",
+                "error_type": "rate_limit_exceeded",
+                "retry_after": retry_after
+            }, indent=2)
+
         try:
             service_registry = registry or get_service_registry()
             confidence_calibrator = service_registry.get_service('confidence_calibrator')
@@ -1400,18 +1749,91 @@ class AsyncChainOfThoughtProcessor:
 class ThreadAwareChainOfThought:
     """Thread-safe version for production use with dependency injection support."""
 
-    _instances: Dict[str, ChainOfThought] = {}
+    # Hybrid approach: WeakValueDictionary for automatic cleanup + strong refs for active conversations
+    _instances: 'weakref.WeakValueDictionary[str, ChainOfThought]' = weakref.WeakValueDictionary()
+    _strong_refs: Dict[str, ChainOfThought] = {}  # Keep strong refs to prevent premature GC
     _lock = threading.RLock()
 
     @classmethod
     def for_conversation(cls, conversation_id: str, registry: Optional[ServiceRegistry] = None) -> ChainOfThought:
         """Get or create a ChainOfThought instance for a conversation."""
         with cls._lock:
-            if conversation_id not in cls._instances:
-                service_registry = registry or get_service_registry()
-                # Create a fresh ChainOfThought instance
-                cls._instances[conversation_id] = ChainOfThought()
-            return cls._instances[conversation_id]
+            # Try to get existing instance from strong references first
+            if conversation_id in cls._strong_refs:
+                return cls._strong_refs[conversation_id]
+
+            # Try to get from weak references (may be None if GC'd)
+            try:
+                weak_instance = cls._instances[conversation_id]
+                if weak_instance is not None:
+                    # Found in weak refs, promote to strong refs
+                    cls._strong_refs[conversation_id] = weak_instance
+                    return weak_instance
+            except KeyError:
+                pass  # Instance doesn't exist, create new one
+
+            # Create new instance
+            service_registry = registry or get_service_registry()
+            new_instance = ChainOfThought()
+
+            # Store in both weak and strong references
+            cls._instances[conversation_id] = new_instance
+            cls._strong_refs[conversation_id] = new_instance
+            return new_instance
+
+    @classmethod
+    def clear_conversation(cls, conversation_id: str) -> bool:
+        """Explicitly clear a conversation from the cache.
+
+        Args:
+            conversation_id: The conversation ID to clear
+
+        Returns:
+            True if conversation was removed, False if not found
+        """
+        with cls._lock:
+            removed_from_weak = cls._instances.pop(conversation_id, None) is not None
+            removed_from_strong = cls._strong_refs.pop(conversation_id, None) is not None
+            return removed_from_weak or removed_from_strong
+
+    @classmethod
+    def clear_all_conversations(cls) -> int:
+        """Clear all conversations and return count cleared.
+
+        Returns:
+            Number of conversations that were cleared
+        """
+        with cls._lock:
+            count = max(len(cls._instances), len(cls._strong_refs))
+            cls._instances.clear()
+            cls._strong_refs.clear()
+            return count
+
+    @classmethod
+    def get_cached_conversation_count(cls) -> int:
+        """Get the current number of cached conversations.
+
+        Returns:
+            Number of conversations currently cached
+        """
+        with cls._lock:
+            return max(len(cls._instances), len(cls._strong_refs))
+
+    @classmethod
+    def release_conversation(cls, conversation_id: str) -> bool:
+        """Release strong reference for a conversation, allowing weak reference cleanup.
+
+        This is the key method for memory management - call this when conversation
+        is no longer actively needed but should remain available for weak reference GC.
+
+        Args:
+            conversation_id: The conversation ID to release
+
+        Returns:
+            True if conversation was released, False if not found
+        """
+        with cls._lock:
+            return cls._strong_refs.pop(conversation_id, None) is not None
 
     def __init__(self, conversation_id: str, registry: Optional[ServiceRegistry] = None):
         self.conversation_id = conversation_id

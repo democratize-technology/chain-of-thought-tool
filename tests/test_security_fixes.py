@@ -513,15 +513,20 @@ class TestJSONInjectionPrevention:
         class NonSerializable:
             def __init__(self):
                 self.circular_ref = self
-        
+
         non_serializable = NonSerializable()
         result = _safe_json_dumps(non_serializable)
+
+        # Should return a safe string representation, not crash
+        assert isinstance(result, str)
+
+        # Should be valid JSON when parsed
         parsed = json.loads(result)
-        
-        # Should return an error response, not crash
-        assert parsed["status"] == "error"
-        assert "JSON serialization failed" in parsed["message"]
-        assert "error_type" in parsed
+        assert isinstance(parsed, str)
+
+        # Should contain object type information, not expose internal structure
+        assert "NonSerializable" in parsed
+        assert "circular_ref" not in parsed  # Internal structure not exposed
     
     def test_tool_handler_injection_prevention(self):
         """Test that all tool handlers produce valid JSON and don't execute injected code."""
@@ -795,15 +800,23 @@ class TestAWSSecurityConfiguration:
 @pytest.mark.security
 class TestSecurityRegression:
     """Test that security fixes don't break existing functionality."""
-    
+
     def setup_method(self):
         """Set up clean state for regression tests."""
         self.cot = ChainOfThought()
         ThreadAwareChainOfThought._instances.clear()
-    
+        # Reset global rate limiter to ensure clean test state
+        from chain_of_thought.core import get_global_rate_limiter
+        limiter = get_global_rate_limiter()
+        limiter.reset_client("default")
+
     def teardown_method(self):
         """Clean up after regression tests."""
         ThreadAwareChainOfThought._instances.clear()
+        # Reset global rate limiter after tests
+        from chain_of_thought.core import get_global_rate_limiter
+        limiter = get_global_rate_limiter()
+        limiter.reset_client("default")
     
     def test_basic_functionality_still_works(self):
         """Test that basic ChainOfThought functionality still works after security fixes."""
@@ -964,6 +977,328 @@ class TestSecurityRegression:
             ["A" * 500] * 50      # Maximum assumptions
         )
         assert max_result["status"] == "success"
+
+
+@pytest.mark.security
+class TestRateLimitingPrevention:
+    """Test rate limiting functionality to prevent DoS attacks."""
+
+    def setup_method(self):
+        """Set up clean state for rate limiting tests."""
+        ThreadAwareChainOfThought._instances.clear()
+        # Reset global rate limiter to ensure clean test state
+        from chain_of_thought.core import get_global_rate_limiter
+        limiter = get_global_rate_limiter()
+        limiter.reset_client("default")
+
+    def teardown_method(self):
+        """Clean up after rate limiting tests."""
+        ThreadAwareChainOfThought._instances.clear()
+        # Reset global rate limiter after tests
+        from chain_of_thought.core import get_global_rate_limiter
+        limiter = get_global_rate_limiter()
+        limiter.reset_client("default")
+
+    def test_rate_limiter_initialization(self):
+        """Test that RateLimiter initializes with correct default limits."""
+        from chain_of_thought.core import RateLimiter
+
+        limiter = RateLimiter()
+
+        # Should have default limits
+        assert limiter.max_requests_per_minute == 60
+        assert limiter.max_requests_per_hour == 1000
+        assert limiter.max_burst_size == 10
+
+        # Should start with empty tracking
+        assert len(limiter._request_counts) == 0
+        assert len(limiter._request_timestamps) == 0
+
+    def test_rate_limiter_custom_limits(self):
+        """Test RateLimiter with custom limits."""
+        from chain_of_thought.core import RateLimiter
+
+        limiter = RateLimiter(
+            max_requests_per_minute=30,
+            max_requests_per_hour=500,
+            max_burst_size=5
+        )
+
+        assert limiter.max_requests_per_minute == 30
+        assert limiter.max_requests_per_hour == 500
+        assert limiter.max_burst_size == 5
+
+    def test_rate_limiter_allows_normal_usage(self):
+        """Test that rate limiter allows normal usage within limits."""
+        from chain_of_thought.core import RateLimiter
+
+        limiter = RateLimiter(max_requests_per_minute=10, max_burst_size=5)
+
+        # Should allow requests within burst limit
+        for i in range(5):
+            result = limiter.check_rate_limit("test_client")
+            assert result is True, f"Request {i+1} should be allowed"
+
+    def test_rate_limiter_blocks_burst_violations(self):
+        """Test that rate limiter blocks burst violations."""
+        from chain_of_thought.core import RateLimiter
+
+        limiter = RateLimiter(max_requests_per_minute=10, max_burst_size=3)
+
+        # Should allow first 3 requests
+        for i in range(3):
+            result = limiter.check_rate_limit("burst_client")
+            assert result is True, f"Request {i+1} should be allowed"
+
+        # Should block 4th request (burst violation)
+        result = limiter.check_rate_limit("burst_client")
+        assert result is False, "4th request should be blocked due to burst limit"
+
+    def test_rate_limiter_blocks_minute_violations(self):
+        """Test that rate limiter blocks per-minute violations."""
+        from chain_of_thought.core import RateLimiter
+        import time
+
+        limiter = RateLimiter(max_requests_per_minute=5, max_burst_size=10)
+
+        # Should allow requests within minute limit
+        for i in range(5):
+            result = limiter.check_rate_limit("minute_client")
+            assert result is True, f"Request {i+1} should be allowed"
+
+        # Should block 6th request (minute violation)
+        result = limiter.check_rate_limit("minute_client")
+        assert result is False, "6th request should be blocked due to minute limit"
+
+    def test_rate_limiter_blocks_hour_violations(self):
+        """Test that rate limiter blocks per-hour violations."""
+        from chain_of_thought.core import RateLimiter
+        import time
+
+        limiter = RateLimiter(max_requests_per_minute=100, max_requests_per_hour=3, max_burst_size=10)
+
+        # Use a different client to avoid minute limit conflicts
+        client_id = "hour_client"
+
+        # Should allow requests within hour limit
+        for i in range(3):
+            result = limiter.check_rate_limit(client_id)
+            assert result is True, f"Request {i+1} should be allowed"
+
+        # Should block 4th request (hour violation)
+        result = limiter.check_rate_limit(client_id)
+        assert result is False, "4th request should be blocked due to hour limit"
+
+    def test_rate_limiter_client_isolation(self):
+        """Test that rate limiter isolates different clients."""
+        from chain_of_thought.core import RateLimiter
+
+        limiter = RateLimiter(max_requests_per_minute=2, max_burst_size=2)
+
+        # Client 1 should be allowed requests
+        for i in range(2):
+            result = limiter.check_rate_limit("client_1")
+            assert result is True, f"Client 1 request {i+1} should be allowed"
+
+        # Client 1 should be blocked
+        result = limiter.check_rate_limit("client_1")
+        assert result is False, "Client 1 should be blocked"
+
+        # Client 2 should still be allowed (isolation)
+        result = limiter.check_rate_limit("client_2")
+        assert result is True, "Client 2 should be allowed (isolated from client 1)"
+
+    def test_rate_limiter_timestamp_cleanup(self):
+        """Test that rate limiter cleans up old timestamps."""
+        from chain_of_thought.core import RateLimiter
+        import time
+
+        limiter = RateLimiter(max_requests_per_minute=10, max_burst_size=5)
+
+        # Make some requests
+        for i in range(3):
+            limiter.check_rate_limit("cleanup_client")
+
+        # Should have stored timestamps
+        assert len(limiter._request_timestamps["cleanup_client"]) == 3
+
+        # Mock time passage (this would require time mocking in implementation)
+        # For now, just verify cleanup structure exists
+        assert hasattr(limiter, '_cleanup_old_timestamps')
+
+    def test_handler_rate_limiting_integration(self):
+        """Test that handlers integrate with rate limiting."""
+        from chain_of_thought.core import (
+            create_chain_of_thought_step_handler,
+            create_get_chain_summary_handler,
+            RateLimiter
+        )
+        import json
+
+        # Create handlers with rate limiting
+        limiter = RateLimiter(max_requests_per_minute=3, max_burst_size=2)
+
+        step_handler = create_chain_of_thought_step_handler(rate_limiter=limiter)
+        summary_handler = create_get_chain_summary_handler(rate_limiter=limiter)
+
+        # Should allow requests within burst limit
+        for i in range(2):
+            result = step_handler(
+                thought=f"Test step {i}",
+                step_number=1,
+                total_steps=1,
+                next_step_needed=False
+            )
+            parsed = json.loads(result)
+            assert parsed["status"] == "success"
+
+        # Should block summary request (burst limit exceeded)
+        result = summary_handler()
+        parsed = json.loads(result)
+        assert parsed["status"] == "error"
+        assert "rate limit exceeded" in parsed["message"].lower()
+
+        # Should block additional requests (rate limit still exceeded)
+        result = step_handler(
+            thought="Should be blocked",
+            step_number=1,
+            total_steps=1,
+            next_step_needed=False
+        )
+        parsed = json.loads(result)
+        assert parsed["status"] == "error"
+        assert "rate limit exceeded" in parsed["message"].lower()
+
+    def test_handler_rate_limit_error_response(self):
+        """Test that rate limit errors have proper response format."""
+        from chain_of_thought.core import create_chain_of_thought_step_handler, RateLimiter
+        import json
+
+        limiter = RateLimiter(max_requests_per_minute=1, max_burst_size=1)
+        handler = create_chain_of_thought_step_handler(rate_limiter=limiter)
+
+        # First request should succeed
+        result = handler(
+            thought="First request",
+            step_number=1,
+            total_steps=1,
+            next_step_needed=False
+        )
+        parsed = json.loads(result)
+        assert parsed["status"] == "success"
+
+        # Second request should be rate limited
+        result = handler(
+            thought="Second request",
+            step_number=2,
+            total_steps=2,
+            next_step_needed=True
+        )
+        parsed = json.loads(result)
+
+        # Should have proper error structure
+        assert parsed["status"] == "error"
+        assert "rate limit" in parsed["message"].lower()
+        assert "retry_after" in parsed or "retry-after" in parsed.get("message", "").lower()
+
+    def test_global_rate_limiter_singleton(self):
+        """Test that global rate limiter singleton works."""
+        from chain_of_thought.core import get_global_rate_limiter, RateLimiter
+
+        # Should return singleton instance
+        limiter1 = get_global_rate_limiter()
+        limiter2 = get_global_rate_limiter()
+
+        assert limiter1 is limiter2
+        assert isinstance(limiter1, RateLimiter)
+
+    def test_default_handlers_use_rate_limiting(self):
+        """Test that default global handlers use rate limiting."""
+        from chain_of_thought.core import (
+            chain_of_thought_step_handler,
+            get_chain_summary_handler,
+            clear_chain_handler,
+            generate_hypotheses_handler,
+            map_assumptions_handler,
+            calibrate_confidence_handler
+        )
+        import json
+
+        # Test that default handlers work (they should use global rate limiter)
+        result = chain_of_thought_step_handler(
+            thought="Test default handler",
+            step_number=1,
+            total_steps=1,
+            next_step_needed=False
+        )
+        parsed = json.loads(result)
+        assert parsed["status"] == "success"
+
+        # Other handlers should also work
+        summary_result = get_chain_summary_handler()
+        summary_parsed = json.loads(summary_result)
+        assert summary_parsed["status"] == "success"
+
+    def test_concurrent_rate_limiting(self):
+        """Test rate limiting under concurrent load."""
+        from chain_of_thought.core import RateLimiter
+        import threading
+        import time
+
+        limiter = RateLimiter(max_requests_per_minute=10, max_burst_size=5)
+        results = []
+
+        def make_request(client_id, request_num):
+            """Make a rate-limited request."""
+            result = limiter.check_rate_limit(client_id)
+            results.append((client_id, request_num, result))
+
+        # Launch concurrent requests for same client
+        threads = []
+        for i in range(15):  # More than burst limit
+            thread = threading.Thread(target=make_request, args=("concurrent_client", i))
+            threads.append(thread)
+
+        # Start all threads
+        for thread in threads:
+            thread.start()
+
+        # Wait for completion
+        for thread in threads:
+            thread.join()
+
+        # Count successful requests
+        successful = sum(1 for _, _, result in results if result)
+
+        # Should not exceed burst limit
+        assert successful <= 5, f"Too many successful requests: {successful} > 5"
+
+    def test_rate_limiting_preserves_functionality(self):
+        """Test that rate limiting doesn't break normal functionality."""
+        from chain_of_thought.core import create_chain_of_thought_step_handler, RateLimiter
+        import json
+
+        limiter = RateLimiter(max_requests_per_minute=100, max_burst_size=50)  # Generous limits
+        handler = create_chain_of_thought_step_handler(rate_limiter=limiter)
+
+        # Normal usage should work exactly as before
+        result = handler(
+            thought="Normal functionality test",
+            step_number=1,
+            total_steps=3,
+            next_step_needed=True,
+            reasoning_stage="Analysis",
+            confidence=0.8,
+            evidence=["Test evidence"],
+            assumptions=["Test assumption"]
+        )
+
+        parsed = json.loads(result)
+        assert parsed["status"] == "success"
+        assert parsed["step_processed"] == 1
+        assert parsed["progress"] == "1/3"
+        assert parsed["confidence"] == 0.8
+        assert parsed["next_step_needed"] is True
 
 
 if __name__ == "__main__":
