@@ -12,7 +12,6 @@ from chain_of_thought import (
 
     # New DI API
     ServiceRegistry,
-    get_service_registry,
     create_chain_of_thought_step_handler,
     create_get_chain_summary_handler,
     create_clear_chain_handler,
@@ -27,7 +26,6 @@ from chain_of_thought import (
 
 
 def example_backward_compatibility():
-    """Example showing existing code continues to work unchanged."""
     print("=== Backward Compatibility Example ===")
 
     # This is exactly how it worked before DI implementation
@@ -45,7 +43,6 @@ def example_backward_compatibility():
 
 
 def example_simple_dependency_injection():
-    """Example of basic dependency injection usage."""
     print("\n=== Simple Dependency Injection Example ===")
 
     # Create an isolated service registry and initialize it
@@ -87,7 +84,6 @@ def example_simple_dependency_injection():
 
 
 def example_thread_safe_multi_tenant():
-    """Example of ThreadAwareChainOfThought with DI."""
     print("\n=== Thread-Safe Multi-Tenant Example ===")
 
     # Simulate multiple concurrent conversations
@@ -146,10 +142,8 @@ def example_thread_safe_multi_tenant():
 
 
 class CustomChainOfThought(ChainOfThought):
-    """Custom implementation demonstrating service replacement."""
 
     def add_step(self, **kwargs):
-        """Override to add custom logging or behavior."""
         print(f"🔧 Custom handler processing step {kwargs.get('step_number')}")
         result = super().add_step(**kwargs)
         # Add custom behavior here
@@ -157,7 +151,6 @@ class CustomChainOfThought(ChainOfThought):
 
 
 def example_custom_service_implementation():
-    """Example of using custom service implementations."""
     print("\n=== Custom Service Implementation Example ===")
 
     # Create registry with custom service and initialize defaults
@@ -180,7 +173,6 @@ def example_custom_service_implementation():
 
 
 def example_service_lifecycle_management():
-    """Example of service lifecycle and configuration."""
     print("\n=== Service Lifecycle Management Example ===")
 
     registry = ServiceRegistry()
@@ -204,7 +196,6 @@ def example_service_lifecycle_management():
 
 
 def example_all_handlers_with_di():
-    """Example showing all handlers working with DI."""
     print("\n=== All Handlers with Dependency Injection ===")
 
     registry = ServiceRegistry()
@@ -259,7 +250,6 @@ def example_all_handlers_with_di():
 
 
 def main():
-    """Run all examples to demonstrate DI functionality."""
     print("🚀 Chain of Thought - Dependency Injection Examples")
     print("=" * 60)
 

@@ -30,7 +30,6 @@ MAX_THOUGHT_LENGTH = 10000
 # Standard imports
 import re
 import html
-import math
 import unicodedata
 from typing import Any, List, Dict, Optional, Union
 
@@ -52,7 +51,6 @@ class ParameterValidator:
     """
 
     def __init__(self):
-        """Initialize the parameter validator."""
         pass
 
     # Dangerous Unicode characters that should be removed
@@ -72,18 +70,6 @@ class ParameterValidator:
     }
 
     def validate_thought_param(self, thought: str) -> str:
-        """
-        Validate and sanitize the thought parameter with enhanced security.
-
-        Args:
-            thought: The thought text to validate
-
-        Returns:
-            The sanitized and validated thought text
-
-        Raises:
-            ValueError: If thought is empty, None, or exceeds length limits
-        """
         # Handle None as special case for better error handling
         if thought is None:
             raise ValueError("thought must be a string")
@@ -109,19 +95,6 @@ class ParameterValidator:
         return html.escape(thought.strip())
 
     def validate_confidence_param(self, confidence: float) -> float:
-        """
-        Validate and sanitize the confidence parameter with enhanced security.
-
-        Args:
-            confidence: The confidence value to validate
-
-        Returns:
-            The validated confidence value
-
-        Raises:
-            TypeError: If confidence is not a number
-            ValueError: If confidence is outside valid range
-        """
         # Type validation with strict isinstance check - exclude numpy types for security
         if not isinstance(confidence, (int, float)) or type(confidence).__module__ == 'numpy':
             raise ValueError(f"confidence must be a number, got {type(confidence).__name__}")
@@ -141,19 +114,6 @@ class ParameterValidator:
         return float(confidence)
 
     def validate_dependencies_param(self, dependencies: List[int]) -> List[int]:
-        """
-        Validate and sanitize the dependencies parameter with enhanced security.
-
-        Args:
-            dependencies: The list of step dependencies to validate
-
-        Returns:
-            The validated and sanitized dependencies list
-
-        Raises:
-            TypeError: If dependencies is not a list
-            ValueError: If dependencies contain invalid values
-        """
         # Type validation with strict isinstance check
         if not isinstance(dependencies, list):
             raise ValueError("dependencies must be a list")

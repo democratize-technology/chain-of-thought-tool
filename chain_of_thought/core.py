@@ -1,9 +1,9 @@
 """
 Chain of Thought Tool - Core Implementation
 """
-from typing import Dict, List, Optional, Any, Callable, Awaitable
-from dataclasses import dataclass, asdict
-from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any, Callable
+from dataclasses import dataclass
+from datetime import datetime
 import json
 import asyncio
 import threading
@@ -249,7 +249,6 @@ _default_registry = ServiceRegistry()
 
 
 def get_service_registry() -> ServiceRegistry:
-    """Get the default service registry."""
     return _default_registry
 
 
@@ -282,9 +281,6 @@ class ThoughtStep:
 
 
 class ChainOfThought:
-    """
-    Chain of Thought processor that tracks reasoning steps and provides analysis.
-    """
 
     def __init__(self):
         self.steps: List[ThoughtStep] = []
@@ -533,9 +529,6 @@ class Hypothesis:
 
 
 class HypothesisGenerator:
-    """
-    Hypothesis generator that creates diverse explanations for observations.
-    """
     
     def __init__(self):
         self.hypotheses: List[Hypothesis] = []
@@ -671,9 +664,6 @@ class Assumption:
 
 
 class AssumptionMapper:
-    """
-    Assumption mapper that identifies and categorizes assumptions in statements.
-    """
     
     def __init__(self):
         self.assumptions: List[Assumption] = []
@@ -939,9 +929,6 @@ class ConfidenceAssessment:
 
 
 class ConfidenceCalibrator:
-    """
-    Confidence calibrator that adjusts overconfident predictions and provides uncertainty bounds.
-    """
     
     def __init__(self):
         self.assessments: List[ConfidenceAssessment] = []
@@ -1523,32 +1510,26 @@ from .security import RequestValidator, SecurityValidationError, default_validat
 
 # Simple convenience wrappers using the generic handler factory
 def chain_of_thought_step_handler(**kwargs) -> str:
-    """Handler function for the chain_of_thought_step tool."""
     return create_generic_handler('chain_of_thought_step')(**kwargs)
 
 
 def get_chain_summary_handler(**kwargs) -> str:
-    """Handler function for the get_chain_summary tool."""
     return create_generic_handler('get_chain_summary')(**kwargs)
 
 
 def clear_chain_handler(**kwargs) -> str:
-    """Handler function for the clear_chain tool."""
     return create_generic_handler('clear_chain')(**kwargs)
 
 
 def generate_hypotheses_handler(**kwargs) -> str:
-    """Handler function for the generate_hypotheses tool."""
     return create_generic_handler('generate_hypotheses')(**kwargs)
 
 
 def map_assumptions_handler(**kwargs) -> str:
-    """Handler function for the map_assumptions tool."""
     return create_generic_handler('map_assumptions')(**kwargs)
 
 
 def calibrate_confidence_handler(**kwargs) -> str:
-    """Handler function for the calibrate_confidence tool."""
     return create_generic_handler('calibrate_confidence')(**kwargs)
 
 
@@ -1557,32 +1538,26 @@ def calibrate_confidence_handler(**kwargs) -> str:
 # =============================================================================
 
 def create_chain_of_thought_step_handler(registry=None, rate_limiter=None, client_id="default"):
-    """Factory function to create a chain_of_thought_step handler."""
     return create_generic_handler('chain_of_thought_step', registry, rate_limiter, client_id)
 
 
 def create_get_chain_summary_handler(registry=None, rate_limiter=None, client_id="default"):
-    """Factory function to create a get_chain_summary handler."""
     return create_generic_handler('get_chain_summary', registry, rate_limiter, client_id)
 
 
 def create_clear_chain_handler(registry=None, rate_limiter=None, client_id="default"):
-    """Factory function to create a clear_chain handler."""
     return create_generic_handler('clear_chain', registry, rate_limiter, client_id)
 
 
 def create_generate_hypotheses_handler(registry=None, rate_limiter=None, client_id="default"):
-    """Factory function to create a generate_hypotheses handler."""
     return create_generic_handler('generate_hypotheses', registry, rate_limiter, client_id)
 
 
 def create_map_assumptions_handler(registry=None, rate_limiter=None, client_id="default"):
-    """Factory function to create a map_assumptions handler."""
     return create_generic_handler('map_assumptions', registry, rate_limiter, client_id)
 
 
 def create_calibrate_confidence_handler(registry=None, rate_limiter=None, client_id="default"):
-    """Factory function to create a calibrate_confidence handler."""
     return create_generic_handler('calibrate_confidence', registry, rate_limiter, client_id)
 
 
