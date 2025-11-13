@@ -24,14 +24,7 @@ from .core import (
     generate_hypotheses_handler,
     map_assumptions_handler,
     calibrate_confidence_handler,
-    # New dependency injection functions
-    create_chain_of_thought_step_handler,
-    create_get_chain_summary_handler,
-    create_clear_chain_handler,
-    create_generate_hypotheses_handler,
-    create_map_assumptions_handler,
-    create_calibrate_confidence_handler,
-    # Generic handler factory (Task #5)
+        # Generic handler factory (Task #5)
     create_generic_handler,
     TOOL_HANDLERS_CONFIG,
     # Service registry
@@ -241,16 +234,10 @@ __all__ = [
     "Dependency injection",
     "ServiceRegistry",
     "get_service_registry",
-    "create_chain_of_thought_step_handler",
-    "create_get_chain_summary_handler",
-    "create_clear_chain_handler",
-    "create_generate_hypotheses_handler",
-    "create_map_assumptions_handler",
-    "create_calibrate_confidence_handler",
     "Generic handler factory",
     "create_generic_handler",
     "TOOL_HANDLERS_CONFIG",
-    "Backward compatibility",
+    "Convenience handler functions",
     "chain_of_thought_step_handler",
     "get_chain_summary_handler",
     "clear_chain_handler",

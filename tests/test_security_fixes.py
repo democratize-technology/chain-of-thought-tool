@@ -298,7 +298,7 @@ class TestInputValidationSecurity:
         with pytest.raises(ValueError, match="step_number must be an integer"):
             self.cot.add_step("test", "not_int", 1, False)
         
-        # Test step_number range limits (now relaxed for backward compatibility)
+        # Test step_number range limits
         # These should now succeed with the updated validation
         try:
             result = self.cot.add_step("test", -10001, 1, False)
@@ -318,7 +318,7 @@ class TestInputValidationSecurity:
         with pytest.raises(ValueError, match="total_steps must be an integer"):
             self.cot.add_step("test", 1, "not_int", False)
         
-        # Test total_steps range limits (now relaxed for backward compatibility)
+        # Test total_steps range limits
         try:
             result = self.cot.add_step("test", 1, -10001, False)
             assert result["status"] == "success"
@@ -415,7 +415,7 @@ class TestInputValidationSecurity:
     
     def test_empty_and_whitespace_validation(self):
         """Test validation of empty strings and whitespace-only inputs."""
-        # Empty thought should be allowed for backward compatibility
+        # Empty thought should be allowed
         result = self.cot.add_step("", 1, 1, False)
         assert result["status"] == "success"
         assert self.cot.steps[0].thought == ""  # HTML escaped empty string is still empty

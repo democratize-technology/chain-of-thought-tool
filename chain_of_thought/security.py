@@ -385,7 +385,7 @@ class RequestValidator:
 
     def _validate_required_parameters(self, sanitized_request: Dict[str, Any]) -> None:
         """Validate that required parameters are present."""
-        required_params = {'messages', 'modelId'}
+        required_params = ['messages', 'modelId']  # Use list for deterministic order
 
         for param in required_params:
             if param not in sanitized_request:

@@ -93,8 +93,8 @@ class ParameterValidator:
             raise ValueError("thought must be a string")
 
         # Handle edge cases that could bypass length checks
-        # Allow empty strings for backward compatibility and edge case testing
-        # Trim whitespace-only strings to empty for compatibility
+        # Allow empty strings for edge case testing
+        # Trim whitespace-only strings to empty
         if thought.isspace():
             thought = ""
 
@@ -636,14 +636,3 @@ class ParameterValidator:
         return validated_items
 
 
-class ChainOfThought:
-    """Legacy class maintained for backward compatibility."""
-
-    def __init__(self):
-        self.validator = ParameterValidator()
-
-    def add_step(self, thought: str, **kwargs):
-        """Legacy method that uses the validator."""
-        validated_thought = self.validator.validate_thought_param(thought)
-        # ... rest of implementation
-        pass

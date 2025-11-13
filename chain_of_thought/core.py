@@ -142,7 +142,7 @@ class ServiceRegistry:
     Thread-safe dependency injection container for managing service instances.
 
     Provides a clean way to manage service lifecycles while maintaining
-    backward compatibility with global singleton usage.
+    global singleton usage.
     """
 
     def __init__(self):
@@ -244,7 +244,7 @@ class ServiceRegistry:
         self._register_default_factories()
 
 
-# Global service registry for backward compatibility
+# Global service registry
 _default_registry = ServiceRegistry()
 
 
@@ -293,6 +293,7 @@ class ChainOfThought:
             "total_confidence": 0.0
         }
         self.validator = ParameterValidator()
+        self._lock = threading.RLock()  # For thread safety
       
     def _validate_and_extract_params(
         self,
@@ -344,6 +345,8 @@ class ChainOfThought:
                 self.steps[i] = self._create_thought_step(validated_params)
                 self._update_metadata()
                 return self._generate_feedback(self.steps[i], is_revision=True)
+        # If we reach here, the step number wasn't found - this shouldn't happen in normal operation
+        # But can occur in race conditions during concurrent access
         return None
 
     def _handle_new_step(self, validated_params: Dict[str, Any]) -> Dict[str, Any]:
@@ -371,21 +374,22 @@ class ChainOfThought:
 
         Returns analysis and feedback for the step.
         """
-        validated_params = self._validate_and_extract_params(
-            thought, step_number, total_steps, next_step_needed,
-            reasoning_stage, confidence, dependencies, contradicts,
-            evidence, assumptions
-        )
+        with self._lock:
+            validated_params = self._validate_and_extract_params(
+                thought, step_number, total_steps, next_step_needed,
+                reasoning_stage, confidence, dependencies, contradicts,
+                evidence, assumptions
+            )
 
-        # Check if this is a revision of an existing step
-        revision_result = self._handle_step_revision(
-            validated_params["step_number"], validated_params
-        )
-        if revision_result:
-            return revision_result
+            # Check if this is a revision of an existing step
+            revision_result = self._handle_step_revision(
+                validated_params["step_number"], validated_params
+            )
+            if revision_result:
+                return revision_result
 
-        # Handle new step
-        return self._handle_new_step(validated_params)
+            # Handle new step
+            return self._handle_new_step(validated_params)
     
     def _generate_feedback(self, step: ThoughtStep, is_revision: bool) -> Dict[str, Any]:
         """Generate feedback and guidance for the thought step."""
@@ -438,75 +442,76 @@ class ChainOfThought:
     
     def generate_summary(self) -> Dict[str, Any]:
         """Generate a comprehensive summary of the chain of thought."""
-        
-        if not self.steps:
-            return {
-                "status": "empty",
-                "message": "No thought steps have been recorded yet."
-            }
-        
-        # Organize by stage
-        stages = {}
-        for step in self.steps:
-            if step.reasoning_stage not in stages:
-                stages[step.reasoning_stage] = []
-            stages[step.reasoning_stage].append(step)
-        
-        all_evidence = set()
-        all_assumptions = set()
-        contradiction_pairs = []
-        
-        for step in self.steps:
-            all_evidence.update(step.evidence or [])
-            all_assumptions.update(step.assumptions or [])
-            if step.contradicts:
-                for contradicted in step.contradicts:
-                    contradiction_pairs.append((step.step_number, contradicted))
-        
-        confidence_by_stage = {}
-        for stage, steps_in_stage in stages.items():
-            avg_confidence = sum(s.confidence for s in steps_in_stage) / len(steps_in_stage)
-            confidence_by_stage[stage] = round(avg_confidence, 3)
-        
-        return {
-            "status": "success",
-            "total_steps": len(self.steps),
-            "stages_covered": list(stages.keys()),
-            "overall_confidence": self.metadata["total_confidence"],
-            "confidence_by_stage": confidence_by_stage,
-            "chain": [
-                {
-                    "step": s.step_number,
-                    "stage": s.reasoning_stage,
-                    "thought_preview": s.thought[:100] + "..." if len(s.thought) > 100 else s.thought,
-                    "confidence": s.confidence,
-                    "has_evidence": bool(s.evidence),
-                    "has_assumptions": bool(s.assumptions)
+        with self._lock:
+            if not self.steps:
+                return {
+                    "status": "empty",
+                    "message": "No thought steps have been recorded yet."
                 }
-                for s in sorted(self.steps, key=lambda x: x.step_number)
-            ],
-            "insights": {
-                "total_evidence": list(all_evidence),
-                "total_assumptions": list(all_assumptions),
-                "contradiction_pairs": contradiction_pairs,
-                "high_confidence_steps": [s.step_number for s in self.steps if s.confidence >= 0.8],
-                "low_confidence_steps": [s.step_number for s in self.steps if s.confidence < 0.5]
-            },
-            "metadata": self.metadata
-        }
+
+            # Organize by stage
+            stages = {}
+            for step in self.steps:
+                if step.reasoning_stage not in stages:
+                    stages[step.reasoning_stage] = []
+                stages[step.reasoning_stage].append(step)
+
+            all_evidence = set()
+            all_assumptions = set()
+            contradiction_pairs = []
+
+            for step in self.steps:
+                all_evidence.update(step.evidence or [])
+                all_assumptions.update(step.assumptions or [])
+                if step.contradicts:
+                    for contradicted in step.contradicts:
+                        contradiction_pairs.append((step.step_number, contradicted))
+
+            confidence_by_stage = {}
+            for stage, steps_in_stage in stages.items():
+                avg_confidence = sum(s.confidence for s in steps_in_stage) / len(steps_in_stage)
+                confidence_by_stage[stage] = round(avg_confidence, 3)
+
+            return {
+                "status": "success",
+                "total_steps": len(self.steps),
+                "stages_covered": list(stages.keys()),
+                "overall_confidence": self.metadata["total_confidence"],
+                "confidence_by_stage": confidence_by_stage,
+                "chain": [
+                    {
+                        "step": s.step_number,
+                        "stage": s.reasoning_stage,
+                        "thought_preview": s.thought[:100] + "..." if len(s.thought) > 100 else s.thought,
+                        "confidence": s.confidence,
+                        "has_evidence": bool(s.evidence),
+                        "has_assumptions": bool(s.assumptions)
+                    }
+                    for s in sorted(self.steps, key=lambda x: x.step_number)
+                ],
+                "insights": {
+                    "total_evidence": list(all_evidence),
+                    "total_assumptions": list(all_assumptions),
+                    "contradiction_pairs": contradiction_pairs,
+                    "high_confidence_steps": [s.step_number for s in self.steps if s.confidence >= 0.8],
+                    "low_confidence_steps": [s.step_number for s in self.steps if s.confidence < 0.5]
+                },
+                "metadata": self.metadata
+            }
     
     def clear_chain(self) -> Dict[str, Any]:
         """Clear all steps and reset the chain of thought."""
-        self.steps.clear()
-        self.metadata = {
-            "created_at": datetime.now().isoformat(),
-            "total_confidence": 0.0
-        }
-        
-        return {
-            "status": "success",
-            "message": "Chain of thought cleared. Ready for new reasoning sequence."
-        }
+        with self._lock:
+            self.steps.clear()
+            self.metadata = {
+                "created_at": datetime.now().isoformat(),
+                "total_confidence": 0.0
+            }
+
+            return {
+                "status": "success",
+                "message": "Chain of thought cleared. Ready for new reasoning sequence."
+            }
 
 
 @dataclass
@@ -1513,69 +1518,40 @@ from .security import RequestValidator, SecurityValidationError, default_validat
 
 
 # =============================================================================
-# BACKWARD COMPATIBILITY WRAPPERS - Task #5 Generic Handler Factory
+# CONVENIENCE HANDLER FUNCTIONS
 # =============================================================================
 
-# Thin wrapper functions around the generic factory for backward compatibility
-def create_chain_of_thought_step_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
-    """Create a chain_of_thought_step handler using the generic factory."""
-    return create_generic_handler('chain_of_thought_step', registry, rate_limiter, client_id)
-
-
-def create_get_chain_summary_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
-    """Create a get_chain_summary handler using the generic factory."""
-    return create_generic_handler('get_chain_summary', registry, rate_limiter, client_id)
-
-
-def create_clear_chain_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
-    """Create a clear_chain handler using the generic factory."""
-    return create_generic_handler('clear_chain', registry, rate_limiter, client_id)
-
-
-def create_generate_hypotheses_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
-    """Create a generate_hypotheses handler using the generic factory."""
-    return create_generic_handler('generate_hypotheses', registry, rate_limiter, client_id)
-
-
-def create_map_assumptions_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
-    """Create a map_assumptions handler using the generic factory."""
-    return create_generic_handler('map_assumptions', registry, rate_limiter, client_id)
-
-
-def create_calibrate_confidence_handler(registry: Optional[ServiceRegistry] = None, rate_limiter: Optional[RateLimiter] = None, client_id: str = "default"):
-    """Create a calibrate_confidence handler using the generic factory."""
-    return create_generic_handler('calibrate_confidence', registry, rate_limiter, client_id)
-
-
-# Backward compatibility: create default handlers using the global registry
+# Simple convenience wrappers using the generic handler factory
 def chain_of_thought_step_handler(**kwargs) -> str:
-    """Handler function for the chain_of_thought_step tool (backward compatibility)."""
-    return create_chain_of_thought_step_handler()(**kwargs)
+    """Handler function for the chain_of_thought_step tool."""
+    return create_generic_handler('chain_of_thought_step')(**kwargs)
 
 
-def get_chain_summary_handler() -> str:
-    """Handler function for the get_chain_summary tool (backward compatibility)."""
-    return create_get_chain_summary_handler()()
+def get_chain_summary_handler(**kwargs) -> str:
+    """Handler function for the get_chain_summary tool."""
+    return create_generic_handler('get_chain_summary')(**kwargs)
 
 
-def clear_chain_handler() -> str:
-    """Handler function for the clear_chain tool (backward compatibility)."""
-    return create_clear_chain_handler()()
+def clear_chain_handler(**kwargs) -> str:
+    """Handler function for the clear_chain tool."""
+    return create_generic_handler('clear_chain')(**kwargs)
 
 
 def generate_hypotheses_handler(**kwargs) -> str:
-    """Handler function for the generate_hypotheses tool (backward compatibility)."""
-    return create_generate_hypotheses_handler()(**kwargs)
+    """Handler function for the generate_hypotheses tool."""
+    return create_generic_handler('generate_hypotheses')(**kwargs)
 
 
 def map_assumptions_handler(**kwargs) -> str:
-    """Handler function for the map_assumptions tool (backward compatibility)."""
-    return create_map_assumptions_handler()(**kwargs)
+    """Handler function for the map_assumptions tool."""
+    return create_generic_handler('map_assumptions')(**kwargs)
 
 
 def calibrate_confidence_handler(**kwargs) -> str:
-    """Handler function for the calibrate_confidence tool (backward compatibility)."""
-    return create_calibrate_confidence_handler()(**kwargs)
+    """Handler function for the calibrate_confidence tool."""
+    return create_generic_handler('calibrate_confidence')(**kwargs)
+
+
 
 
 class StopReasonHandler(ABC):
