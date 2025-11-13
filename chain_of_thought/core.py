@@ -1552,6 +1552,40 @@ def calibrate_confidence_handler(**kwargs) -> str:
     return create_generic_handler('calibrate_confidence')(**kwargs)
 
 
+# =============================================================================
+# HANDLER CREATION FUNCTIONS (for testing and factory patterns)
+# =============================================================================
+
+def create_chain_of_thought_step_handler(registry=None, rate_limiter=None, client_id="default"):
+    """Factory function to create a chain_of_thought_step handler."""
+    return create_generic_handler('chain_of_thought_step', registry, rate_limiter, client_id)
+
+
+def create_get_chain_summary_handler(registry=None, rate_limiter=None, client_id="default"):
+    """Factory function to create a get_chain_summary handler."""
+    return create_generic_handler('get_chain_summary', registry, rate_limiter, client_id)
+
+
+def create_clear_chain_handler(registry=None, rate_limiter=None, client_id="default"):
+    """Factory function to create a clear_chain handler."""
+    return create_generic_handler('clear_chain', registry, rate_limiter, client_id)
+
+
+def create_generate_hypotheses_handler(registry=None, rate_limiter=None, client_id="default"):
+    """Factory function to create a generate_hypotheses handler."""
+    return create_generic_handler('generate_hypotheses', registry, rate_limiter, client_id)
+
+
+def create_map_assumptions_handler(registry=None, rate_limiter=None, client_id="default"):
+    """Factory function to create a map_assumptions handler."""
+    return create_generic_handler('map_assumptions', registry, rate_limiter, client_id)
+
+
+def create_calibrate_confidence_handler(registry=None, rate_limiter=None, client_id="default"):
+    """Factory function to create a calibrate_confidence handler."""
+    return create_generic_handler('calibrate_confidence', registry, rate_limiter, client_id)
+
+
 
 
 class StopReasonHandler(ABC):

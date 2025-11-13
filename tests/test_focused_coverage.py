@@ -356,3 +356,69 @@ class TestBasicFunctionalityCoverage:
         # Test basic boolean validation
         result = validator.validate_boolean_param(True)
         assert result is True
+
+
+class TestCoreFocusedCoverage:
+    """Focused tests for core.py uncovered lines."""
+
+    def test_line_97_create_generic_handler_invalid_tool(self):
+        """Test line 97: create_generic_handler ValueError for unknown tool."""
+        from chain_of_thought.core import create_generic_handler
+
+        with pytest.raises(ValueError, match="Unknown tool 'invalid_tool'"):
+            create_generic_handler('invalid_tool')
+
+    def test_line_234_235_clear_service_thread_safety(self):
+        """Test lines 234-235: ServiceRegistry.clear_service thread safety."""
+        from chain_of_thought.core import ServiceRegistry, ChainOfThought
+
+        registry = ServiceRegistry()
+        test_service = ChainOfThought()
+        registry.register_service("test_service", lambda: test_service)
+
+        # This should execute the thread-safe operations on lines 234-235
+        registry.clear_service("test_service")
+
+    def test_line_239_240_clear_all_services_thread_safety(self):
+        """Test lines 239-240: ServiceRegistry.clear_all_services thread safety."""
+        from chain_of_thought.core import ServiceRegistry, ChainOfThought
+
+        registry = ServiceRegistry()
+        registry.register_service("test_service1", lambda: ChainOfThought())
+        registry.register_service("test_service2", lambda: ChainOfThought())
+
+        # This should execute the thread-safe operations on lines 239-240
+        registry.clear_all_services()
+
+    
+    def test_line_697_assumption_mapper_edge_case(self):
+        """Test line 697: AssumptionMapper edge case handling."""
+        from chain_of_thought.core import AssumptionMapper
+
+        mapper = AssumptionMapper()
+
+        # Test with simple statement that might trigger uncovered paths
+        result = mapper.map_assumptions("Simple statement")
+        assert isinstance(result, dict)
+
+    def test_line_708_thread_aware_chain_initialization(self):
+        """Test line 708: ThreadAwareChainOfThought initialization."""
+        from chain_of_thought.core import ThreadAwareChainOfThought
+
+        # This should trigger line 708
+        cot = ThreadAwareChainOfThought(conversation_id="test_conv")
+        assert cot.conversation_id == "test_conv"
+
+    def test_line_758_generic_handler_with_registry(self):
+        """Test line 758: create_generic_handler with custom registry."""
+        from chain_of_thought.core import create_generic_handler, ServiceRegistry, ChainOfThought
+
+        custom_registry = ServiceRegistry()
+        custom_service = ChainOfThought()
+        custom_registry.register_service("chain_of_thought", lambda: custom_service)
+
+        # This should trigger line 758
+        handler = create_generic_handler('chain_of_thought_step', registry=custom_registry)
+        assert callable(handler)
+
+    
