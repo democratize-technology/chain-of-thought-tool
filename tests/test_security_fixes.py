@@ -19,13 +19,7 @@ import unicodedata
 from unittest.mock import patch, MagicMock
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Optional AWS imports for testing AWS integration
-try:
-    import boto3
-    from botocore.exceptions import NoCredentialsError, ClientError
-    HAS_BOTO3 = True
-except ImportError:
-    HAS_BOTO3 = False
+# AWS imports removed - credential validation tests moved to test_aws_integration.py
 
 from chain_of_thought.core import (
     ChainOfThought, 
@@ -461,7 +455,14 @@ class TestInputValidationSecurity:
 @pytest.mark.security  
 class TestJSONInjectionPrevention:
     """Test JSON injection prevention in tool handlers."""
-    
+
+    def setup_method(self):
+        """Set up clean state for JSON injection tests."""
+        # Reset global rate limiter to ensure clean test state
+        from chain_of_thought.core import get_global_rate_limiter
+        limiter = get_global_rate_limiter()
+        limiter.reset_client("default")
+
     def test_safe_json_dumps_prevents_injection(self):
         """Test that _safe_json_dumps prevents JSON injection attacks."""
         # Test basic functionality
@@ -650,176 +651,8 @@ class TestJSONInjectionPrevention:
             assert ': ' in success_result  # Proper key-value separator
 
 
-@pytest.mark.security  
-@pytest.mark.skipif(not HAS_BOTO3, reason="boto3 not available")
-class TestAWSSecurityConfiguration:
-    """Test AWS security configuration and credential validation."""
-    
-    def test_get_aws_region_environment_variables(self):
-        """Test AWS region configuration from environment variables."""
-        from example_bedrock_integration import get_aws_region
-        
-        # Test AWS_REGION takes priority
-        with patch.dict(os.environ, {"AWS_REGION": "us-west-2", "AWS_DEFAULT_REGION": "eu-west-1"}):
-            region = get_aws_region()
-            assert region == "us-west-2"
-        
-        # Test AWS_DEFAULT_REGION fallback
-        with patch.dict(os.environ, {"AWS_DEFAULT_REGION": "ap-southeast-1"}, clear=True):
-            if "AWS_REGION" in os.environ:
-                del os.environ["AWS_REGION"]
-            region = get_aws_region()
-            assert region == "ap-southeast-1"
-        
-        # Test default fallback
-        with patch.dict(os.environ, {}, clear=True):
-            region = get_aws_region()
-            assert region == "us-east-1"
-    
-    @pytest.mark.asyncio
-    async def test_credential_validation_no_credentials(self):
-        """Test credential validation when no AWS credentials are available."""
-        from example_bedrock_integration import validate_aws_credentials
-        
-        # Mock boto3 to simulate no credentials
-        with patch('boto3.client') as mock_client:
-            mock_sts = MagicMock()
-            mock_sts.get_caller_identity.side_effect = NoCredentialsError()
-            mock_client.return_value = mock_sts
-            
-            with pytest.raises(RuntimeError, match="No AWS credentials found"):
-                await validate_aws_credentials("us-east-1")
-    
-    @pytest.mark.asyncio
-    async def test_credential_validation_invalid_credentials(self):
-        """Test credential validation with invalid AWS credentials."""
-        from example_bedrock_integration import validate_aws_credentials
-        
-        # Mock boto3 to simulate invalid credentials
-        with patch('boto3.client') as mock_client:
-            mock_sts = MagicMock()
-            mock_sts.get_caller_identity.side_effect = ClientError(
-                {'Error': {'Code': 'InvalidAccessKeyId', 'Message': 'Invalid access key'}},
-                'GetCallerIdentity'
-            )
-            mock_client.return_value = mock_sts
-            
-            with pytest.raises(RuntimeError, match="AWS credentials invalid: InvalidAccessKeyId"):
-                await validate_aws_credentials("us-east-1")
-    
-    @pytest.mark.asyncio
-    async def test_credential_validation_unsupported_region(self):
-        """Test credential validation with unsupported Bedrock region."""
-        from example_bedrock_integration import validate_aws_credentials
-        
-        # Mock successful STS but failed Bedrock client creation
-        with patch('boto3.client') as mock_client:
-            def client_side_effect(service, **kwargs):
-                if service == 'sts':
-                    mock_sts = MagicMock()
-                    mock_sts.get_caller_identity.return_value = {
-                        'Account': 'YOUR_AWS_ACCOUNT_ID',
-                        'Arn': 'arn:aws:iam::YOUR_AWS_ACCOUNT_ID:user/your-username'
-                    }
-                    return mock_sts
-                elif service == 'bedrock-runtime':
-                    raise ClientError(
-                        {'Error': {'Code': 'UnrecognizedClientException', 'Message': 'Region not supported'}},
-                        'CreateClient'
-                    )
-            
-            mock_client.side_effect = client_side_effect
-            
-            with pytest.raises(RuntimeError, match="Bedrock service not available in region 'unsupported-region'"):
-                await validate_aws_credentials("unsupported-region")
-    
-    @pytest.mark.asyncio
-    async def test_credential_validation_success(self):
-        """Test successful credential validation."""
-        from example_bedrock_integration import validate_aws_credentials
-        
-        # Mock successful validation
-        with patch('boto3.client') as mock_client:
-            mock_sts = MagicMock()
-            mock_sts.get_caller_identity.return_value = {
-                'Account': 'YOUR_AWS_ACCOUNT_ID',
-                'Arn': 'arn:aws:iam::YOUR_AWS_ACCOUNT_ID:user/your-username'
-            }
-            
-            mock_bedrock = MagicMock()
-            
-            def client_side_effect(service, **kwargs):
-                if service == 'sts':
-                    return mock_sts
-                elif service == 'bedrock-runtime':
-                    return mock_bedrock
-            
-            mock_client.side_effect = client_side_effect
-            
-            result = await validate_aws_credentials("us-east-1")
-            assert result == mock_bedrock
-    
-    def test_no_hardcoded_credentials(self):
-        """Test that no credentials are hardcoded in the example file."""
-        # Get the project root directory relative to this test file
-        project_root = os.path.dirname(os.path.dirname(__file__))
-        example_file_path = os.path.join(project_root, 'example_bedrock_integration.py')
-
-        with open(example_file_path, 'r') as f:
-            content = f.read()
-        
-        # Check for common credential patterns
-        credential_patterns = [
-            'AKIA',  # AWS Access Key ID prefix
-            'aws_access_key_id',
-            'aws_secret_access_key',
-            'aws_session_token',
-            '="AKIA',
-            "='AKIA",
-            'access_key',
-            'secret_key'
-        ]
-        
-        content_lower = content.lower()
-        for pattern in credential_patterns:
-            # Allow environment variable references but not actual credentials
-            if pattern in content_lower:
-                # Make sure it's only in environment variable context or documentation
-                lines_with_pattern = [line.strip() for line in content.split('\n') if pattern.lower() in line.lower()]
-                for line in lines_with_pattern:
-                    # Allowed: comments, environment variable references, documentation
-                    assert (
-                        line.startswith('#') or  # Comment
-                        line.startswith('-') or  # Markdown list item (documentation)
-                        'environ' in line.lower() or  # Environment variable
-                        'aws_access_key_id' in line and 'export' in line or  # Documentation
-                        'required iam permissions' in line.lower() or  # Documentation
-                        'aws cli profiles' in line.lower() or  # Documentation
-                        'environment variables:' in line.lower()  # Documentation header
-                    ), f"Potential hardcoded credential found: {line}"
-    
-    def test_environment_variable_documentation(self):
-        """Test that environment variables are properly documented."""
-        # Get the project root directory relative to this test file
-        project_root = os.path.dirname(os.path.dirname(__file__))
-        example_file_path = os.path.join(project_root, 'example_bedrock_integration.py')
-
-        with open(example_file_path, 'r') as f:
-            content = f.read()
-        
-        # Should document required environment variables
-        assert 'AWS_REGION' in content
-        assert 'AWS_DEFAULT_REGION' in content
-        assert 'AWS_ACCESS_KEY_ID' in content
-        assert 'AWS_SECRET_ACCESS_KEY' in content
-        
-        # Should provide setup instructions
-        assert 'aws configure' in content
-        assert 'export AWS_REGION' in content
-        
-        # Should document required IAM permissions
-        assert 'bedrock:InvokeModel' in content
-        assert 'sts:GetCallerIdentity' in content
+# AWS credential validation tests moved to tests/test_aws_integration.py
+# This improves test organization by keeping integration tests with other AWS tests
 
 
 @pytest.mark.security
