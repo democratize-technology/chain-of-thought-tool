@@ -19,12 +19,15 @@ Usage:
 
 from .core import (
     chain_of_thought_step_handler,
-    get_chain_summary_handler, 
+    get_chain_summary_handler,
     clear_chain_handler,
     generate_hypotheses_handler,
     map_assumptions_handler,
     calibrate_confidence_handler,
+    export_chain_handler,
+    import_chain_handler,
     ChainOfThought,
+    ThoughtStep as ThoughtStep,
     ThreadAwareChainOfThought,
     StopReasonHandler,
     BedrockStopReasonHandler,
@@ -100,7 +103,7 @@ TOOL_SPECS = [
     {
         "toolSpec": {
             "name": "get_chain_summary",
-            "description": "Get a comprehensive summary of the chain of thought reasoning process",
+            "description": "Get a comprehensive summary of the chain of thought reasoning process. Returns: total_steps, stages_covered, overall_confidence, confidence_by_stage, chain (with thought_preview per step), insights (evidence, assumptions, contradictions), content_synthesis (full thought text grouped by stage), completion_status (has_all_stages, percent_complete, stages_required, stages_missing), and metadata.",
             "inputSchema": {
                 "json": {
                     "type": "object",
@@ -200,6 +203,46 @@ TOOL_SPECS = [
                 }
             }
         }
+    },
+    {
+        "toolSpec": {
+            "name": "export_chain",
+            "description": "Export the current chain of thought to a JSON file for later import.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Absolute or relative path to the output JSON file",
+                            "minLength": 1
+                        }
+                    },
+                    "required": ["file_path"],
+                    "additionalProperties": False
+                }
+            }
+        }
+    },
+    {
+        "toolSpec": {
+            "name": "import_chain",
+            "description": "Import a chain of thought from a JSON file, replacing the current chain.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Absolute or relative path to the JSON file to import",
+                            "minLength": 1
+                        }
+                    },
+                    "required": ["file_path"],
+                    "additionalProperties": False
+                }
+            }
+        }
     }
 ]
 
@@ -210,14 +253,17 @@ HANDLERS = {
     "clear_chain": clear_chain_handler,
     "generate_hypotheses": generate_hypotheses_handler,
     "map_assumptions": map_assumptions_handler,
-    "calibrate_confidence": calibrate_confidence_handler
+    "calibrate_confidence": calibrate_confidence_handler,
+    "export_chain": export_chain_handler,
+    "import_chain": import_chain_handler
 }
 
 # Convenience exports
 __all__ = [
     "TOOL_SPECS",
-    "HANDLERS", 
+    "HANDLERS",
     "ChainOfThought",
+    "ThoughtStep",
     "ThreadAwareChainOfThought",
     "StopReasonHandler",
     "BedrockStopReasonHandler",
@@ -227,7 +273,9 @@ __all__ = [
     "clear_chain_handler",
     "generate_hypotheses_handler",
     "map_assumptions_handler",
-    "calibrate_confidence_handler"
+    "calibrate_confidence_handler",
+    "export_chain_handler",
+    "import_chain_handler"
 ]
 
 # Version info

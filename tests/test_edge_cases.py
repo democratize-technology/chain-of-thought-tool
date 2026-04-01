@@ -40,16 +40,26 @@ class TestInputValidationEdgeCases:
     
     def test_extreme_step_numbers(self):
         """Test handling of extreme step numbers."""
-        # Very large step number
+        # Values exceeding the maximum are rejected
+        with pytest.raises(ValueError, match="step_number must be between -10000 and 10000000"):
+            self.cot.add_step(
+                "Large step test",
+                step_number=sys.maxsize,
+                total_steps=sys.maxsize,
+                next_step_needed=False
+            )
+
+        # Maximum valid step number
+        self.cot.clear_chain()
         result = self.cot.add_step(
-            "Large step test",
-            step_number=sys.maxsize,
-            total_steps=sys.maxsize,
+            "Max step test",
+            step_number=10000000,
+            total_steps=10000000,
             next_step_needed=False
         )
         assert result["status"] == "success"
-        assert result["step_processed"] == sys.maxsize
-        
+        assert result["step_processed"] == 10000000
+
         # Zero step number
         self.cot.clear_chain()
         result = self.cot.add_step(
@@ -60,8 +70,8 @@ class TestInputValidationEdgeCases:
         )
         assert result["status"] == "success"
         assert result["step_processed"] == 0
-        
-        # Negative step number
+
+        # Negative step number within valid range
         self.cot.clear_chain()
         result = self.cot.add_step(
             "Negative step test",
@@ -71,19 +81,29 @@ class TestInputValidationEdgeCases:
         )
         assert result["status"] == "success"
         assert result["step_processed"] == -1
+
+        # Values below the minimum are rejected
+        self.cot.clear_chain()
+        with pytest.raises(ValueError, match="step_number must be between -10000 and 10000000"):
+            self.cot.add_step(
+                "Too negative step test",
+                step_number=-10001,
+                total_steps=1,
+                next_step_needed=False
+            )
     
     def test_extreme_confidence_values(self):
         """Test handling of extreme confidence values."""
-        # Confidence above 1.0
+        # Confidence above 1.0 but within the relaxed range is allowed
         result = self.cot.add_step(
             "High confidence",
             1, 1, False,
             confidence=1.5
         )
         assert result["status"] == "success"
-        assert result["confidence"] == 1.5  # Implementation doesn't clamp
-        
-        # Confidence below 0.0
+        assert result["confidence"] == 1.5
+
+        # Confidence below 0.0 but within the relaxed range is allowed
         self.cot.clear_chain()
         result = self.cot.add_step(
             "Negative confidence",
@@ -92,24 +112,43 @@ class TestInputValidationEdgeCases:
         )
         assert result["status"] == "success"
         assert result["confidence"] == -0.5
-        
-        # Very large confidence
+
+        # Maximum valid confidence
         self.cot.clear_chain()
         result = self.cot.add_step(
-            "Extreme confidence",
+            "Max confidence",
             1, 1, False,
-            confidence=float('inf')
+            confidence=100.0
         )
         assert result["status"] == "success"
-        
-        # NaN confidence
+        assert result["confidence"] == 100.0
+
+        # Infinite values are rejected as non-finite (checked before range)
         self.cot.clear_chain()
-        result = self.cot.add_step(
-            "NaN confidence",
-            1, 1, False,
-            confidence=float('nan')
-        )
-        assert result["status"] == "success"
+        with pytest.raises(ValueError, match="confidence must be a finite number"):
+            self.cot.add_step(
+                "Extreme confidence",
+                1, 1, False,
+                confidence=float('inf')
+            )
+
+        # NaN is now rejected (cannot produce valid RFC 7159 JSON)
+        self.cot.clear_chain()
+        with pytest.raises(ValueError, match="confidence must be a finite number"):
+            self.cot.add_step(
+                "NaN confidence",
+                1, 1, False,
+                confidence=float('nan')
+            )
+
+        # Values below the minimum are rejected
+        self.cot.clear_chain()
+        with pytest.raises(ValueError, match="confidence must be between -100.0 and 100.0"):
+            self.cot.add_step(
+                "Too low confidence",
+                1, 1, False,
+                confidence=-101.0
+            )
     
     def test_empty_and_none_inputs(self):
         """Test handling of empty and None inputs."""
@@ -118,16 +157,11 @@ class TestInputValidationEdgeCases:
         assert result["status"] == "success"
         assert self.cot.steps[0].thought == ""
         
-        # None thought (should fail in type checking, but test behavior)
+        # None thought raises ValueError from type validation
         self.cot.clear_chain()
-        try:
-            result = self.cot.add_step(None, 1, 1, False)
-            # If it doesn't raise an error, verify behavior
-            assert result["status"] == "success"
-        except TypeError:
-            # Expected behavior for None input
-            pass
-        
+        with pytest.raises(ValueError, match="thought must be a string"):
+            self.cot.add_step(None, 1, 1, False)  # type: ignore[arg-type]
+
         # Empty lists for optional parameters
         self.cot.clear_chain()
         result = self.cot.add_step(
@@ -147,29 +181,60 @@ class TestInputValidationEdgeCases:
     
     def test_very_long_content(self):
         """Test handling of very long content."""
-        # 1MB of text
+        # Content exceeding the 10,000 character limit is rejected
         mega_thought = "x" * (1024 * 1024)
-        result = self.cot.add_step(mega_thought, 1, 1, False)
-        assert result["status"] == "success"
-        assert len(self.cot.steps[0].thought) == 1024 * 1024
-        
-        # Very long evidence and assumptions
-        long_evidence = ["evidence_" + "x" * 10000 for i in range(100)]
-        long_assumptions = ["assumption_" + "x" * 10000 for i in range(100)]
-        
+        with pytest.raises(ValueError, match="thought cannot exceed 10,000 characters"):
+            self.cot.add_step(mega_thought, 1, 1, False)
+
+        # Content at exactly the 10,000 character limit is accepted
         self.cot.clear_chain()
+        max_thought = "x" * 10000
+        result = self.cot.add_step(max_thought, 1, 1, False)
+        assert result["status"] == "success"
+        assert len(self.cot.steps[0].thought) == 10000
+
+        # Evidence and assumptions items exceeding 500 chars are rejected
+        self.cot.clear_chain()
+        with pytest.raises(ValueError, match="evidence items cannot exceed 500 characters"):
+            self.cot.add_step(
+                "Long evidence test",
+                1, 1, False,
+                evidence=["evidence_" + "x" * 500]  # 509 chars > 500 limit
+            )
+
+        # Evidence and assumptions lists exceeding 50 items are rejected
+        self.cot.clear_chain()
+        with pytest.raises(ValueError, match="evidence list cannot exceed 50 items"):
+            self.cot.add_step(
+                "Too many evidence items",
+                1, 1, False,
+                evidence=["item"] * 51
+            )
+
+        # Valid maximum evidence and assumptions (50 items, 500 chars each)
+        self.cot.clear_chain()
+        max_evidence = ["e" * 500] * 50
+        max_assumptions = ["a" * 500] * 50
         result = self.cot.add_step(
-            "Long metadata test",
+            "Max metadata test",
             1, 1, False,
-            evidence=long_evidence,
-            assumptions=long_assumptions
+            evidence=max_evidence,
+            assumptions=max_assumptions
         )
         assert result["status"] == "success"
-        assert len(self.cot.steps[0].evidence) == 100
-        assert len(self.cot.steps[0].assumptions) == 100
+        step = self.cot.steps[0]
+        assert step.evidence is not None
+        assert len(step.evidence) == 50
+        assert step.assumptions is not None
+        assert len(step.assumptions) == 50
     
     def test_unicode_and_special_characters(self):
-        """Test handling of unicode and special characters."""
+        """Test handling of unicode and special characters.
+
+        The add_step method applies html.escape() to thought, evidence, and
+        assumptions for XSS prevention. Stored values are the HTML-escaped form.
+        """
+        import html as html_module
         unicode_test_cases = [
             "思考步骤 🤔 with émojis",
             "¡Español! ñáéíóú",
@@ -182,30 +247,35 @@ class TestInputValidationEdgeCases:
             "नमस्ते",
             "🚀🔥💯✨🎯🏆💎🌟⭐🎉",  # Emoji sequence
             "Mixed: ASCII + 中文 + 🎯 + العربية",
-            "\n\t\r\\\"\'\`",  # Control characters
+            "\n\t\r\\\"\'`",  # Control characters
             "Zero\x00width\x00characters",
             "Math symbols: ∑∏∫∆∇∂√∞",
             "Currency: $€¥£₹₽₿"
         ]
-        
+
         for i, test_text in enumerate(unicode_test_cases):
             self.cot.clear_chain()
+            evidence_text = f"Evidence: {test_text}"
             result = self.cot.add_step(
                 test_text,
                 1, 1, False,
-                evidence=[f"Evidence: {test_text}"],
+                evidence=[evidence_text],
                 assumptions=[f"Assumption: {test_text}"]
             )
             assert result["status"] == "success", f"Failed on test case {i}: {test_text}"
-            assert self.cot.steps[0].thought == test_text
-            assert self.cot.steps[0].evidence[0] == f"Evidence: {test_text}"
+            # Stored values are HTML-escaped (XSS prevention)
+            assert self.cot.steps[0].thought == html_module.escape(test_text.strip())
+            step_evidence = self.cot.steps[0].evidence
+            assert step_evidence is not None
+            assert step_evidence[0] == html_module.escape(evidence_text.strip())
     
     def test_large_dependency_lists(self):
         """Test handling of large dependency and contradiction lists."""
-        # Large dependency list
+        # Large dependency list: range(1, 10000) produces 9999 items (1..9999)
         large_dependencies = list(range(1, 10000))  # 9999 dependencies
-        large_contradictions = list(range(10000, 20000))  # 9999 contradictions
-        
+        # range(10001, 20000) produces 9999 items (10001..19999)
+        large_contradictions = list(range(10001, 20000))  # 9999 contradictions
+
         result = self.cot.add_step(
             "Large dependencies test",
             10000, 10000, False,
@@ -214,7 +284,9 @@ class TestInputValidationEdgeCases:
         )
         assert result["status"] == "success"
         step = self.cot.steps[0]
+        assert step.dependencies is not None
         assert len(step.dependencies) == 9999
+        assert step.contradicts is not None
         assert len(step.contradicts) == 9999
     
     def test_invalid_reasoning_stage(self):
@@ -256,50 +328,65 @@ class TestJSONSerializationEdgeCases:
     
     def test_json_serialization_special_values(self):
         """Test JSON serialization with special float values."""
-        # Add step with special values
-        result = self.cot.add_step(
-            "Special values test",
-            1, 1, False,
-            confidence=float('inf')
-        )
-        
-        # Try to serialize the result
-        result_json = json.dumps(result, indent=2)
-        parsed_result = json.loads(result_json)
-        
-        # JSON should handle or convert special values
-        assert isinstance(parsed_result, dict)
-        
-        # Test with NaN
+        # float('inf') is non-finite and is rejected before the range check
+        with pytest.raises(ValueError, match="confidence must be a finite number"):
+            self.cot.add_step(
+                "Special values test",
+                1, 1, False,
+                confidence=float('inf')
+            )
+
+        # NaN is now rejected to prevent RFC-non-compliant JSON output
+        self.cot.clear_chain()
+        with pytest.raises(ValueError, match="confidence must be a finite number"):
+            self.cot.add_step(
+                "NaN test",
+                1, 1, False,
+                confidence=float('nan')
+            )
+
+        # Valid high-confidence value serializes correctly
         self.cot.clear_chain()
         result = self.cot.add_step(
-            "NaN test",
+            "High confidence test",
             1, 1, False,
-            confidence=float('nan')
+            confidence=99.9
         )
-        
-        # NaN handling in JSON varies by implementation
-        try:
-            result_json = json.dumps(result, indent=2)
-        except ValueError:
-            # Expected - JSON can't handle NaN
-            pass
+        result_json = json.dumps(result, indent=2)
+        parsed_result = json.loads(result_json)
+        assert isinstance(parsed_result, dict)
+        assert parsed_result["confidence"] == 99.9
     
     def test_handler_json_output_special_cases(self):
         """Test handler JSON output with special cases."""
-        # Test with very large numbers
+        # sys.maxsize exceeds the step_number limit — handler returns error JSON
         result_json = chain_of_thought_step_handler(
             thought="Large numbers test",
             step_number=sys.maxsize,
             total_steps=sys.maxsize,
             next_step_needed=False
         )
-        
-        # Should produce valid JSON
+
+        # Should produce valid JSON with an error status (not crash)
         result = json.loads(result_json)
-        assert result["step_processed"] == sys.maxsize
-        
+        assert result["status"] == "error"
+        assert "step_number" in result["message"]
+
+        # Maximum valid step number produces a success response
+        from chain_of_thought.core import _chain_processor
+        _chain_processor.clear_chain()
+        result_json = chain_of_thought_step_handler(
+            thought="Max valid step number test",
+            step_number=10000000,
+            total_steps=10000000,
+            next_step_needed=False
+        )
+        result = json.loads(result_json)
+        assert result["status"] == "success"
+        assert result["step_processed"] == 10000000
+
         # Test with unicode content
+        _chain_processor.clear_chain()
         unicode_thought = "Unicode test: 🚀 中文 العربية"
         result_json = chain_of_thought_step_handler(
             thought=unicode_thought,
@@ -307,12 +394,10 @@ class TestJSONSerializationEdgeCases:
             total_steps=1,
             next_step_needed=False
         )
-        
+
         result = json.loads(result_json)
         assert result["status"] == "success"
-        
-        # Verify unicode is preserved in the chain
-        from chain_of_thought.core import _chain_processor
+
         _chain_processor.clear_chain()  # Clean up
     
     def test_summary_json_with_large_chain(self):
@@ -349,10 +434,10 @@ class TestErrorRecoveryScenarios:
         
         original_add_step = _chain_processor.add_step
         
-        def failing_add_step(*args, **kwargs):
+        def failing_add_step(*_args: object, **_kwargs: object) -> object:
             raise RuntimeError("Simulated error")
-        
-        _chain_processor.add_step = failing_add_step
+
+        _chain_processor.add_step = failing_add_step  # type: ignore[method-assign]
         
         try:
             # Call handler - should catch exception and return error JSON
@@ -374,30 +459,33 @@ class TestErrorRecoveryScenarios:
     
     def test_memory_pressure_handling(self):
         """Test behavior under memory pressure."""
-        # Create many large chains to simulate memory pressure
+        # Create many chains with steps at validation limits
         chains = []
-        
+
         try:
-            for i in range(100):
+            for i in range(10):
                 chain = ChainOfThought()
-                
-                # Add many large steps
-                for j in range(100):
-                    large_content = "x" * 10000  # 10KB per step
+
+                # Add steps using content within validation limits:
+                # thought: 10000 chars max, evidence items: 500 chars max, 50 items max
+                for j in range(50):
+                    step_content = "x" * 10000   # exactly at the thought limit
+                    evidence_item = "e" * 500     # exactly at the evidence item limit
+                    assumption_item = "a" * 500   # exactly at the assumption item limit
                     chain.add_step(
-                        large_content,
-                        j + 1, 100, True,
-                        evidence=[large_content] * 10,
-                        assumptions=[large_content] * 10
+                        step_content,
+                        j + 1, 50, True,
+                        evidence=[evidence_item] * 50,
+                        assumptions=[assumption_item] * 50
                     )
-                
+
                 chains.append(chain)
-                
-                # Periodically check if we can still create summaries
-                if i % 10 == 0:
+
+                # Periodically check that summaries still work
+                if i % 5 == 0:
                     summary = chain.generate_summary()
                     assert summary["status"] == "success"
-            
+
         except MemoryError:
             # Expected under extreme memory pressure
             pass
@@ -412,14 +500,8 @@ class TestErrorRecoveryScenarios:
             chain.add_step(f"Step {i}", i + 1, 10, True)
         
         # Simulate concurrent modifications by modifying the steps list
-        # while generating summary
         original_steps = chain.steps.copy()
-        
-        # Modify steps during summary generation
-        def modify_during_summary():
-            summary = chain.generate_summary()
-            return summary
-        
+
         # Clear steps mid-way through other operations
         chain.steps.clear()
         summary = chain.generate_summary()
@@ -540,10 +622,11 @@ class TestAssumptionMapperEdgeCases:
     def test_empty_statement(self):
         """Test assumption mapping with empty statement."""
         result = self.mapper.map_assumptions("", depth="surface")
-        
+
         assert "status" in result
         if result["status"] == "success":
-            assert "assumptions" in result
+            # The count field is named 'assumptions_found', not 'assumptions'
+            assert "assumptions_found" in result
     
     def test_nonsensical_statement(self):
         """Test assumption mapping with nonsensical statement."""

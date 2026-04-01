@@ -1,15 +1,18 @@
 """
 Chain of Thought Tool - Core Implementation
 """
-from typing import Dict, List, Optional, Any, Callable, Awaitable
+from typing import Dict, List, Optional, Any, Callable
 from dataclasses import dataclass, asdict
 from datetime import datetime
 import json
 import asyncio
 import threading
 import html
+import math
 import re
 from abc import ABC, abstractmethod
+
+MAX_IMPORT_STEPS = 10_000
 
 
 @dataclass
@@ -25,8 +28,8 @@ class ThoughtStep:
     contradicts: Optional[List[int]] = None
     evidence: Optional[List[str]] = None
     assumptions: Optional[List[str]] = None
-    timestamp: str = None
-    
+    timestamp: Optional[str] = None
+
     def __post_init__(self):
         if self.timestamp is None:
             self.timestamp = datetime.now().isoformat()
@@ -54,23 +57,26 @@ class ChainOfThought:
     
     def _validate_input(
         self,
-        thought: str,
-        step_number: int,
-        total_steps: int,
-        reasoning_stage: str = "Analysis",
-        confidence: float = 0.8,
-        dependencies: Optional[List[int]] = None,
-        contradicts: Optional[List[int]] = None,
-        evidence: Optional[List[str]] = None,
-        assumptions: Optional[List[str]] = None
+        thought: Any,
+        step_number: Any,
+        total_steps: Any,
+        next_step_needed: Any = True,
+        reasoning_stage: Any = "Analysis",
+        confidence: Any = 0.8,
+        dependencies: Any = None,
+        contradicts: Any = None,
+        evidence: Any = None,
+        assumptions: Any = None
     ) -> Dict[str, Any]:
         """
         Validate all input parameters for security and reasonable limits.
-        
+
+        Accepts Any types intentionally — this is the runtime boundary validator
+        for untrusted LLM tool-call inputs where static types are not enforced.
         Returns validated parameters with HTML escaping applied.
         Raises ValueError with descriptive messages for validation failures.
         """
-        
+
         # Validate thought parameter
         if not isinstance(thought, str):
             raise ValueError("thought must be a string")
@@ -94,15 +100,15 @@ class ChainOfThought:
         reasoning_stage_cleaned = reasoning_stage.strip()
         
         # Validate numeric parameters with relaxed limits for backward compatibility
-        if not isinstance(step_number, int):
+        if isinstance(step_number, bool) or not isinstance(step_number, int):
             raise ValueError("step_number must be an integer")
         # Allow reasonable range for step numbers (including negative for edge cases)
         # Increased limit to support existing test cases but still prevent DoS attacks
         if step_number < -10000 or step_number > 10000000:
             raise ValueError("step_number must be between -10000 and 10000000")
-        
-        if not isinstance(total_steps, int):
-            raise ValueError("total_steps must be an integer") 
+
+        if isinstance(total_steps, bool) or not isinstance(total_steps, int):
+            raise ValueError("total_steps must be an integer")
         # Allow reasonable range for total_steps
         if total_steps < -10000 or total_steps > 10000000:
             raise ValueError("total_steps must be between -10000 and 10000000")
@@ -114,8 +120,10 @@ class ChainOfThought:
         
         # Validate confidence - allow wider range for backward compatibility
         # But still prevent extreme values that could cause issues
-        if not isinstance(confidence, (int, float)):
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
             raise ValueError("confidence must be a number")
+        if isinstance(confidence, float) and (math.isnan(confidence) or math.isinf(confidence)):
+            raise ValueError("confidence must be a finite number")
         if confidence < -100.0 or confidence > 100.0:
             raise ValueError("confidence must be between -100.0 and 100.0")
         
@@ -167,10 +175,15 @@ class ChainOfThought:
                     raise ValueError("assumptions items cannot exceed 500 characters")
                 assumptions_cleaned.append(html.escape(item.strip()))
         
+        # Validate next_step_needed
+        if not isinstance(next_step_needed, bool):
+            raise ValueError("next_step_needed must be a boolean")
+
         return {
             "thought": thought_cleaned,
             "step_number": step_number,
             "total_steps": total_steps,
+            "next_step_needed": next_step_needed,
             "reasoning_stage": reasoning_stage_cleaned,
             "confidence": float(confidence),
             "dependencies": dependencies_cleaned if dependencies_cleaned else None,
@@ -203,6 +216,7 @@ class ChainOfThought:
             thought=thought,
             step_number=step_number,
             total_steps=total_steps,
+            next_step_needed=next_step_needed,
             reasoning_stage=reasoning_stage,
             confidence=confidence,
             dependencies=dependencies,
@@ -210,21 +224,18 @@ class ChainOfThought:
             evidence=evidence,
             assumptions=assumptions
         )
-        
+
         # Extract validated parameters
         thought = validated_params["thought"]
         step_number = validated_params["step_number"]
         total_steps = validated_params["total_steps"]
+        next_step_needed = validated_params["next_step_needed"]
         reasoning_stage = validated_params["reasoning_stage"]
         confidence = validated_params["confidence"]
         dependencies = validated_params["dependencies"]
         contradicts = validated_params["contradicts"]
         evidence = validated_params["evidence"]
         assumptions = validated_params["assumptions"]
-        
-        # Validate next_step_needed parameter (missed in validation helper)
-        if not isinstance(next_step_needed, bool):
-            raise ValueError("next_step_needed must be a boolean")
         
         # Check if this is a revision of an existing step
         for i, step in enumerate(self.steps):
@@ -290,7 +301,7 @@ class ChainOfThought:
         if step.contradicts:
             feedback_parts.append(f"Contradicts steps: {', '.join(map(str, step.contradicts))}. Consider reconciliation.")
         
-        progress = step.step_number / step.total_steps
+        progress = step.step_number / step.total_steps if step.total_steps != 0 else 0.0
         if progress >= 0.8 and step.next_step_needed:
             feedback_parts.append("Approaching conclusion. Consider synthesis of insights.")
         
@@ -344,12 +355,38 @@ class ChainOfThought:
             avg_confidence = sum(s.confidence for s in steps_in_stage) / len(steps_in_stage)
             confidence_by_stage[stage] = round(avg_confidence, 3)
         
+        # Build content_synthesis: full thought text (not truncated) grouped by stage
+        content_synthesis: Dict[str, List[str]] = {}
+        for stage, steps_in_stage in stages.items():
+            content_synthesis[stage] = [s.thought for s in steps_in_stage]
+
+        # Build completion_status against the 5 canonical reasoning stages
+        required_stages = [
+            "Problem Definition",
+            "Research",
+            "Analysis",
+            "Synthesis",
+            "Conclusion"
+        ]
+        stages_present = set(stages.keys())
+        stages_missing = [s for s in required_stages if s not in stages_present]
+        stages_found = [s for s in required_stages if s in stages_present]
+        percent_complete = round(len(stages_found) / len(required_stages) * 100.0, 1)
+        completion_status = {
+            "has_all_stages": len(stages_missing) == 0,
+            "percent_complete": percent_complete,
+            "stages_required": required_stages,
+            "stages_missing": stages_missing
+        }
+
         return {
             "status": "success",
             "total_steps": len(self.steps),
             "stages_covered": list(stages.keys()),
             "overall_confidence": self.metadata["total_confidence"],
             "confidence_by_stage": confidence_by_stage,
+            "content_synthesis": content_synthesis,
+            "completion_status": completion_status,
             "chain": [
                 {
                     "step": s.step_number,
@@ -378,10 +415,241 @@ class ChainOfThought:
             "created_at": datetime.now().isoformat(),
             "total_confidence": 0.0
         }
-        
+
         return {
             "status": "success",
             "message": "Chain of thought cleared. Ready for new reasoning sequence."
+        }
+
+    @staticmethod
+    def _validate_file_path(file_path: str) -> None:
+        """Validate file_path is a non-empty string."""
+        if not isinstance(file_path, str) or not file_path.strip():
+            raise ValueError("file_path must be a non-empty string")
+
+    def export_chain(self, file_path: str) -> Dict[str, Any]:
+        """
+        Serialize all steps to JSON and write to file.
+
+        Args:
+            file_path: Path to the output file.
+
+        Returns:
+            Status dict indicating success or error.
+        """
+        try:
+            self._validate_file_path(file_path)
+            data = {
+                "steps": [asdict(step) for step in self.steps],
+                "metadata": self.metadata
+            }
+            serialized = _safe_json_dumps(data, indent=2)
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(serialized)
+            return {
+                "status": "success",
+                "message": f"Chain exported to {file_path}",
+                "steps_exported": len(self.steps)
+            }
+        except (OSError, IOError, ValueError) as e:
+            return {"status": "error", "message": str(e)}
+
+    def import_chain(self, file_path: str) -> Dict[str, Any]:
+        """
+        Load JSON from file and restore ThoughtStep objects, replacing the current chain.
+
+        Step numbers are preserved as-is, including non-sequential numbering.
+        Does NOT use add_step() to avoid triggering revision logic.
+
+        Only files produced by this library's export_chain are guaranteed to have
+        pre-sanitized content.
+
+        Args:
+            file_path: Path to the JSON file previously produced by export_chain.
+
+        Returns:
+            Status dict indicating success or error.
+        """
+        try:
+            self._validate_file_path(file_path)
+            with open(file_path, "r", encoding="utf-8") as f:
+                raw = f.read()
+            data = json.loads(raw)
+        except FileNotFoundError:
+            return {"status": "error", "message": f"File not found: {file_path}"}
+        except (OSError, IOError) as e:
+            return {"status": "error", "message": str(e)}
+        except json.JSONDecodeError as e:
+            return {"status": "error", "message": f"Invalid JSON: {e}"}
+        except ValueError as e:
+            return {"status": "error", "message": str(e)}
+
+        if not isinstance(data, dict):
+            return {"status": "error", "message": "Invalid JSON structure: expected a JSON object at root"}
+
+        steps_data = data.get("steps", [])
+
+        if not isinstance(steps_data, list):
+            return {"status": "error", "message": "Invalid JSON structure: 'steps' must be a list"}
+
+        if len(steps_data) > MAX_IMPORT_STEPS:
+            return {
+                "status": "error",
+                "message": (
+                    f"Import rejected: {len(steps_data)} steps exceeds maximum of {MAX_IMPORT_STEPS}"
+                )
+            }
+
+        required_keys = {"thought", "step_number", "total_steps", "next_step_needed"}
+        restored: List[ThoughtStep] = []
+        for idx, d in enumerate(steps_data):
+            if not isinstance(d, dict):
+                return {
+                    "status": "error",
+                    "message": f"Invalid step at index {idx}: each step must be a JSON object"
+                }
+            missing = required_keys - d.keys()
+            if missing:
+                return {
+                    "status": "error",
+                    "message": f"Invalid step at index {idx}: missing required fields {sorted(missing)}"
+                }
+            if not isinstance(d["thought"], str):
+                return {
+                    "status": "error",
+                    "message": f"Invalid step at index {idx}: 'thought' must be a string"
+                }
+            if not isinstance(d["step_number"], int) or isinstance(d["step_number"], bool):
+                return {
+                    "status": "error",
+                    "message": f"Invalid step at index {idx}: 'step_number' must be an integer"
+                }
+            if not isinstance(d["total_steps"], int) or isinstance(d["total_steps"], bool):
+                return {
+                    "status": "error",
+                    "message": f"Invalid step at index {idx}: 'total_steps' must be an integer"
+                }
+            if not isinstance(d["next_step_needed"], bool):
+                return {
+                    "status": "error",
+                    "message": f"Invalid step at index {idx}: 'next_step_needed' must be a boolean"
+                }
+            if "confidence" in d:
+                conf = d["confidence"]
+                if isinstance(conf, bool) or not isinstance(conf, (int, float)):
+                    return {
+                        "status": "error",
+                        "message": f"Invalid step at index {idx}: 'confidence' must be a number"
+                    }
+                if isinstance(conf, float) and (math.isnan(conf) or math.isinf(conf)):
+                    return {
+                        "status": "error",
+                        "message": f"Invalid step at index {idx}: 'confidence' must be a finite number"
+                    }
+
+            # Validate optional string field: reasoning_stage
+            reasoning_stage_val = d.get("reasoning_stage", "Analysis")
+            if not isinstance(reasoning_stage_val, str):
+                return {
+                    "status": "error",
+                    "message": f"Invalid step at index {idx}: 'reasoning_stage' must be a string"
+                }
+
+            # Validate optional list-of-int fields: dependencies, contradicts
+            for int_list_field in ("dependencies", "contradicts"):
+                field_val = d.get(int_list_field)
+                if field_val is not None:
+                    if not isinstance(field_val, list):
+                        return {
+                            "status": "error",
+                            "message": f"Invalid step at index {idx}: '{int_list_field}' must be a list"
+                        }
+                    for elem in field_val:
+                        if isinstance(elem, bool) or not isinstance(elem, int):
+                            return {
+                                "status": "error",
+                                "message": (
+                                    f"Invalid step at index {idx}: "
+                                    f"'{int_list_field}' elements must be integers"
+                                )
+                            }
+
+            # Validate optional list-of-str fields: evidence, assumptions
+            for str_list_field in ("evidence", "assumptions"):
+                field_val = d.get(str_list_field)
+                if field_val is not None:
+                    if not isinstance(field_val, list):
+                        return {
+                            "status": "error",
+                            "message": f"Invalid step at index {idx}: '{str_list_field}' must be a list"
+                        }
+                    for elem in field_val:
+                        if not isinstance(elem, str):
+                            return {
+                                "status": "error",
+                                "message": (
+                                    f"Invalid step at index {idx}: "
+                                    f"'{str_list_field}' elements must be strings"
+                                )
+                            }
+
+            # Validate optional timestamp field
+            timestamp_val = d.get("timestamp")
+            if timestamp_val is not None and not isinstance(timestamp_val, str):
+                return {
+                    "status": "error",
+                    "message": f"Invalid step at index {idx}: 'timestamp' must be a string or null"
+                }
+
+            # Sanitize text fields matching add_step behavior
+            thought_val = html.escape(d["thought"].strip())
+
+            # Apply same reasoning_stage validation as _validate_input
+            reasoning_stage_val_stripped = reasoning_stage_val.strip()
+            if len(reasoning_stage_val_stripped) > 100:
+                return {
+                    "status": "error",
+                    "message": f"Invalid step at index {idx}: 'reasoning_stage' cannot exceed 100 characters"
+                }
+            if not re.match(r'^[a-zA-Z0-9 _-]+$', reasoning_stage_val_stripped):
+                return {
+                    "status": "error",
+                    "message": f"Invalid step at index {idx}: 'reasoning_stage' can only contain letters, numbers, spaces, underscores, and hyphens"
+                }
+
+            # HTML escape evidence and assumptions items
+            evidence_list = d.get("evidence") or []
+            evidence_sanitized = [html.escape(item.strip()) for item in evidence_list]
+
+            assumptions_list = d.get("assumptions") or []
+            assumptions_sanitized = [html.escape(item.strip()) for item in assumptions_list]
+
+            step = ThoughtStep(
+                thought=thought_val,
+                step_number=d["step_number"],
+                total_steps=d["total_steps"],
+                reasoning_stage=reasoning_stage_val_stripped,
+                confidence=d.get("confidence", 0.8),
+                next_step_needed=d["next_step_needed"],
+                dependencies=d.get("dependencies") or [],
+                contradicts=d.get("contradicts") or [],
+                evidence=evidence_sanitized,
+                assumptions=assumptions_sanitized,
+                timestamp=timestamp_val
+            )
+            restored.append(step)
+
+        self.steps = restored
+        if not restored:
+            self.metadata["total_confidence"] = 0.0
+            self.metadata.pop("last_updated", None)
+        else:
+            self._update_metadata()
+
+        return {
+            "status": "success",
+            "message": f"Chain imported from {file_path}",
+            "steps_imported": len(self.steps)
         }
 
 
@@ -394,8 +662,8 @@ class Hypothesis:
     testability_score: float = 0.7
     reasoning: str = ""
     evidence_requirements: Optional[List[str]] = None
-    timestamp: str = None
-    
+    timestamp: Optional[str] = None
+
     def __post_init__(self):
         if self.timestamp is None:
             self.timestamp = datetime.now().isoformat()
@@ -435,8 +703,8 @@ class HypothesisGenerator:
         # Ensure we don't generate more than requested
         types_to_generate = hypothesis_types[:hypothesis_count]
         
-        for i, hypothesis_type in enumerate(types_to_generate):
-            hypothesis = self._generate_hypothesis_by_type(observation, hypothesis_type, i + 1)
+        for hypothesis_type in types_to_generate:
+            hypothesis = self._generate_hypothesis_by_type(observation, hypothesis_type)
             self.hypotheses.append(hypothesis)
         
         # Rank by testability
@@ -469,7 +737,7 @@ class HypothesisGenerator:
             "metadata": self.metadata
         }
     
-    def _generate_hypothesis_by_type(self, observation: str, hypothesis_type: str, rank: int) -> Hypothesis:
+    def _generate_hypothesis_by_type(self, observation: str, hypothesis_type: str) -> Hypothesis:
         """Generate a hypothesis of a specific type."""
         
         if hypothesis_type == "scientific":
@@ -532,8 +800,8 @@ class Assumption:
     is_critical: bool = False
     reasoning: str = ""
     validation_methods: Optional[List[str]] = None
-    timestamp: str = None
-    
+    timestamp: Optional[str] = None
+
     def __post_init__(self):
         if self.timestamp is None:
             self.timestamp = datetime.now().isoformat()
@@ -798,8 +1066,8 @@ class ConfidenceAssessment:
     overconfidence_indicators: Optional[List[str]] = None
     calibration_reasoning: str = ""
     uncertainty_factors: Optional[List[str]] = None
-    timestamp: str = None
-    
+    timestamp: Optional[str] = None
+
     def __post_init__(self):
         if self.timestamp is None:
             self.timestamp = datetime.now().isoformat()
@@ -1022,16 +1290,13 @@ _confidence_calibrator = ConfidenceCalibrator()
 def _safe_json_dumps(data: Any, indent: int = 2) -> str:
     """
     Safely serialize data to JSON, preventing injection attacks.
-    
+
     Args:
         data: Data to serialize
         indent: JSON indentation level
-        
+
     Returns:
         Safe JSON string
-        
-    Raises:
-        ValueError: If data cannot be safely serialized
     """
     try:
         # Validate that we're dealing with safe data structures
@@ -1041,14 +1306,14 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
                 data = asdict(data) if hasattr(data, '__dataclass_fields__') else data.__dict__
             else:
                 data = str(data)
-        
+
         # Use secure JSON parameters to prevent injection
         return json.dumps(
-            data, 
+            data,
             indent=indent,
             ensure_ascii=True,  # Prevent Unicode injection attacks
-            separators=(',', ': '),  # Prevent whitespace injection
-            sort_keys=True  # Consistent output, prevent structure manipulation
+            sort_keys=True,  # Consistent output, prevent structure manipulation
+            allow_nan=False  # Prevent RFC-non-compliant NaN/Infinity in output
         )
     except (TypeError, ValueError, OverflowError) as e:
         # Handle serialization errors gracefully
@@ -1061,7 +1326,6 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
             error_data,
             indent=indent,
             ensure_ascii=True,
-            separators=(',', ': '),
             sort_keys=True
         )
 
@@ -1124,6 +1388,24 @@ def calibrate_confidence_handler(**kwargs) -> str:
         return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
 
 
+def export_chain_handler(**kwargs) -> str:
+    """Handler function for the export_chain tool."""
+    try:
+        result = _chain_processor.export_chain(**kwargs)
+        return _safe_json_dumps(result, indent=2)
+    except Exception as e:
+        return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+
+
+def import_chain_handler(**kwargs) -> str:
+    """Handler function for the import_chain tool."""
+    try:
+        result = _chain_processor.import_chain(**kwargs)
+        return _safe_json_dumps(result, indent=2)
+    except Exception as e:
+        return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+
+
 class StopReasonHandler(ABC):
     """Abstract base for handling stopReason integration with CoT."""
     
@@ -1148,46 +1430,80 @@ class BedrockStopReasonHandler(StopReasonHandler):
             self.handlers = handlers or {
                 "chain_of_thought_step": self._create_chain_step_handler(),
                 "get_chain_summary": self._create_summary_handler(),
-                "clear_chain": self._create_clear_handler()
+                "clear_chain": self._create_clear_handler(),
+                "export_chain": self._create_export_handler(),
+                "import_chain": self._create_import_handler()
             }
         else:
             # Use global handlers
             self.handlers = handlers or {
                 "chain_of_thought_step": chain_of_thought_step_handler,
                 "get_chain_summary": get_chain_summary_handler,
-                "clear_chain": clear_chain_handler
+                "clear_chain": clear_chain_handler,
+                "export_chain": export_chain_handler,
+                "import_chain": import_chain_handler
             }
     
     def _create_chain_step_handler(self):
         """Create a chain step handler bound to this instance's chain."""
+        chain = self.chain
+        assert chain is not None
         def handler(**kwargs):
             try:
-                result = self.chain.add_step(**kwargs)
+                result = chain.add_step(**kwargs)
                 return _safe_json_dumps(result, indent=2)
             except Exception as e:
                 return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
         return handler
-    
+
     def _create_summary_handler(self):
         """Create a summary handler bound to this instance's chain."""
+        chain = self.chain
+        assert chain is not None
         def handler():
             try:
-                result = self.chain.generate_summary()
+                result = chain.generate_summary()
                 return _safe_json_dumps(result, indent=2)
             except Exception as e:
                 return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
         return handler
-    
+
     def _create_clear_handler(self):
         """Create a clear handler bound to this instance's chain."""
+        chain = self.chain
+        assert chain is not None
         def handler():
             try:
-                result = self.chain.clear_chain()
+                result = chain.clear_chain()
                 return _safe_json_dumps(result, indent=2)
             except Exception as e:
                 return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
         return handler
-    
+
+    def _create_export_handler(self):
+        """Create an export handler bound to this instance's chain."""
+        chain = self.chain
+        assert chain is not None
+        def handler(**kwargs):
+            try:
+                result = chain.export_chain(**kwargs)
+                return _safe_json_dumps(result, indent=2)
+            except Exception as e:
+                return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+        return handler
+
+    def _create_import_handler(self):
+        """Create an import handler bound to this instance's chain."""
+        chain = self.chain
+        assert chain is not None
+        def handler(**kwargs):
+            try:
+                result = chain.import_chain(**kwargs)
+                return _safe_json_dumps(result, indent=2)
+            except Exception as e:
+                return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+        return handler
+
     async def should_continue_reasoning(self, chain: ChainOfThought) -> bool:
         """Check if CoT indicates more steps needed."""
         if not chain.steps:
@@ -1239,7 +1555,7 @@ class AsyncChainOfThoughtProcessor:
         max_iter = max_iterations or self._max_iterations
         messages = initial_request.get("messages", []).copy()
         
-        for iteration in range(max_iter):
+        for _ in range(max_iter):
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 None, 
@@ -1342,14 +1658,21 @@ class ThreadAwareChainOfThought:
     
     def get_handlers(self):
         """Get handlers bound to this instance."""
+        chain = self.chain
         return {
             "chain_of_thought_step": lambda **kwargs: _safe_json_dumps(
-                self.chain.add_step(**kwargs), indent=2
+                chain.add_step(**kwargs), indent=2
             ),
             "get_chain_summary": lambda: _safe_json_dumps(
-                self.chain.generate_summary(), indent=2
+                chain.generate_summary(), indent=2
             ),
             "clear_chain": lambda: _safe_json_dumps(
-                self.chain.clear_chain(), indent=2
+                chain.clear_chain(), indent=2
+            ),
+            "export_chain": lambda **kwargs: _safe_json_dumps(
+                chain.export_chain(**kwargs), indent=2
+            ),
+            "import_chain": lambda **kwargs: _safe_json_dumps(
+                chain.import_chain(**kwargs), indent=2
             )
         }
