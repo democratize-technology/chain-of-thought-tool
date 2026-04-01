@@ -26,6 +26,13 @@ from .core import (
     calibrate_confidence_handler,
     export_chain_handler,
     import_chain_handler,
+        # Generic handler factory (Task #5)
+    create_generic_handler,
+    TOOL_HANDLERS_CONFIG,
+    # Service registry
+    ServiceRegistry,
+    get_service_registry,
+    # Core classes
     ChainOfThought,
     ThoughtStep as ThoughtStep,
     ThreadAwareChainOfThought,
@@ -33,6 +40,7 @@ from .core import (
     BedrockStopReasonHandler,
     AsyncChainOfThoughtProcessor
 )
+from .validators import ParameterValidator
 
 # Tool specifications compatible with Converse API format
 TOOL_SPECS = [
@@ -262,12 +270,20 @@ HANDLERS = {
 __all__ = [
     "TOOL_SPECS",
     "HANDLERS",
+    # Core classes
     "ChainOfThought",
     "ThoughtStep",
     "ThreadAwareChainOfThought",
     "StopReasonHandler",
     "BedrockStopReasonHandler",
     "AsyncChainOfThoughtProcessor",
+    # Dependency injection
+    "ServiceRegistry",
+    "get_service_registry",
+    # Generic handler factory
+    "create_generic_handler",
+    "TOOL_HANDLERS_CONFIG",
+    # Handler functions
     "chain_of_thought_step_handler",
     "get_chain_summary_handler",
     "clear_chain_handler",
@@ -275,7 +291,9 @@ __all__ = [
     "map_assumptions_handler",
     "calibrate_confidence_handler",
     "export_chain_handler",
-    "import_chain_handler"
+    "import_chain_handler",
+    # Utilities
+    "ParameterValidator",
 ]
 
 # Version info

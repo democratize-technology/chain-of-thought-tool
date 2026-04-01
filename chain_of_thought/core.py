@@ -7,12 +7,253 @@ from datetime import datetime
 import json
 import asyncio
 import threading
+import weakref
+import time
+import logging
 import html
 import math
 import re
 from abc import ABC, abstractmethod
+from .validators import ParameterValidator
 
-MAX_IMPORT_STEPS = 10_000
+# =============================================================================
+# CONFIGURATION CONSTANTS - Task #4 Magic Numbers Extraction
+# =============================================================================
+
+# Rate Limiter Configuration
+DEFAULT_MAX_REQUESTS_PER_MINUTE = 60
+DEFAULT_MAX_REQUESTS_PER_HOUR = 1000
+DEFAULT_MAX_BURST_SIZE = 10
+
+# Sanitization and Security Limits
+MAX_RECURSION_DEPTH = 50
+MAX_LIST_SIZE = 100
+MAX_STRING_LENGTH = 1000
+MAX_JSON_SIZE = 100000  # 100KB limit
+MAX_IMPORT_STEPS = 10_000  # DoS prevention: max steps allowed in import_chain
+
+# Confidence Calibration Thresholds
+HIGH_CONFIDENCE_THRESHOLD = 0.15
+MEDIUM_CONFIDENCE_THRESHOLD = 0.05
+
+# Text Processing Limits
+MAX_PREDICTION_WORDS = 20
+
+
+# =============================================================================
+# HANDLER FACTORY CONFIGURATION - Task #5 Generic Handler Factory
+# =============================================================================
+
+# Configuration for tool handlers that the generic factory can create
+TOOL_HANDLERS_CONFIG = {
+    'chain_of_thought_step': {
+        'service_name': 'chain_of_thought',
+        'service_method': 'add_step'
+    },
+    'get_chain_summary': {
+        'service_name': 'chain_of_thought',
+        'service_method': 'generate_summary'
+    },
+    'clear_chain': {
+        'service_name': 'chain_of_thought',
+        'service_method': 'clear_chain'
+    },
+    'generate_hypotheses': {
+        'service_name': 'hypothesis_generator',
+        'service_method': 'generate_hypotheses'
+    },
+    'map_assumptions': {
+        'service_name': 'assumption_mapper',
+        'service_method': 'map_assumptions'
+    },
+    'calibrate_confidence': {
+        'service_name': 'confidence_calibrator',
+        'service_method': 'calibrate_confidence'
+    }
+}
+
+
+def create_generic_handler(
+    tool_name: str,
+    registry: Optional['ServiceRegistry'] = None,
+    rate_limiter: Optional['RateLimiter'] = None,
+    client_id: str = "default"
+) -> Callable:
+    """
+    Create a generic handler function for any configured tool.
+
+    This function replaces the individual create_*_handler functions with
+    a single configurable implementation that reduces code duplication.
+
+    Args:
+        tool_name: Name of the tool to create a handler for
+        registry: Service registry to use. If None, uses default global registry.
+        rate_limiter: Rate limiter to use. If None, uses global rate limiter.
+        client_id: Client identifier for rate limiting.
+
+    Returns:
+        Handler function that handles rate limiting and service calls
+
+    Raises:
+        ValueError: If tool_name is not configured
+    """
+    if tool_name not in TOOL_HANDLERS_CONFIG:
+        raise ValueError(f"Unknown tool '{tool_name}'. Available tools: {list(TOOL_HANDLERS_CONFIG.keys())}")
+
+    config = TOOL_HANDLERS_CONFIG[tool_name]
+    service_name = config['service_name']
+    service_method = config['service_method']
+
+    # Use provided rate limiter or global one
+    limiter = rate_limiter or get_global_rate_limiter()
+
+    def handler(**kwargs) -> str:
+        """Generic handler function with rate limiting and service injection."""
+
+        # Check rate limit first
+        if not limiter.check_rate_limit(client_id):
+            retry_after = limiter.get_retry_after(client_id)
+            return _safe_json_dumps({
+                "status": "error",
+                "message": f"Rate limit exceeded. Retry after {retry_after or 60} seconds.",
+                "error_type": "rate_limit_exceeded",
+                "retry_after": retry_after
+            }, indent=2)
+
+        try:
+            service_registry = registry or get_service_registry()
+            service = service_registry.get_service(service_name)
+
+            # Call the service method with the provided kwargs
+            method = getattr(service, service_method)
+            result = method(**kwargs)
+
+            return _safe_json_dumps(result, indent=2)
+
+        except Exception as e:
+            return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+
+    return handler
+
+
+class ServiceCreationError(Exception):
+    """Raised when service creation fails in ServiceRegistry."""
+    pass
+
+
+class ServiceRegistry:
+    """
+    Thread-safe dependency injection container for managing service instances.
+
+    Provides a clean way to manage service lifecycles while maintaining
+    global singleton usage.
+    """
+
+    def __init__(self):
+        self._services: Dict[str, Any] = {}
+        self._factories: Dict[str, Callable[[], Any]] = {}
+        self._lock = threading.RLock()
+
+    def _register_default_factories(self):
+        """Register default factories for all core services."""
+        self._factories.update({
+            'chain_of_thought': lambda: ChainOfThought(),
+            'hypothesis_generator': lambda: HypothesisGenerator(),
+            'assumption_mapper': lambda: AssumptionMapper(),
+            'confidence_calibrator': lambda: ConfidenceCalibrator(),
+        })
+
+    def register_service(self, name: str, service: Any) -> None:
+        """
+        Register a service instance.
+
+        Args:
+            name: Service name
+            service: Service instance to register
+        """
+        with self._lock:
+            self._services[name] = service
+
+    def register_factory(self, name: str, factory: Callable[[], Any]) -> None:
+        """
+        Register a factory function for lazy service creation.
+
+        Args:
+            name: Service name
+            factory: Factory function that creates the service
+        """
+        with self._lock:
+            self._factories[name] = factory
+            # Remove any existing instance to force recreation
+            self._services.pop(name, None)
+
+    def get_service(self, name: str) -> Any:
+        """
+        Get a service instance, creating it lazily if needed.
+
+        Args:
+            name: Service name
+
+        Returns:
+            Service instance
+
+        Raises:
+            KeyError: If service is not registered
+        """
+        with self._lock:
+            # Return existing instance if available
+            if name in self._services:
+                return self._services[name]
+
+            # Create new instance using factory
+            if name in self._factories:
+                try:
+                    service = self._factories[name]()
+
+                    # Validate that factory returned a valid service
+                    if service is None:
+                        raise ServiceCreationError(
+                            f"Failed to create service '{name}': factory returned None"
+                        )
+
+                    self._services[name] = service
+                    return service
+
+                except Exception as e:
+                    # Log the error for debugging
+                    logging.error(f"Failed to create service '{name}': {type(e).__name__}: {str(e)}")
+                    raise ServiceCreationError(
+                        f"Failed to create service '{name}': {str(e)}"
+                    ) from e
+
+            raise KeyError(f"Service '{name}' not registered")
+
+    def has_service(self, name: str) -> bool:
+        """Check if a service is registered."""
+        with self._lock:
+            return name in self._factories
+
+    def clear_service(self, name: str) -> None:
+        """Clear a service instance (will be recreated on next access)."""
+        with self._lock:
+            self._services.pop(name, None)
+
+    def clear_all_services(self) -> None:
+        """Clear all service instances."""
+        with self._lock:
+            self._services.clear()
+
+    def initialize_default_services(self):
+        """Initialize default service factories after all classes are defined."""
+        self._register_default_factories()
+
+
+# Global service registry
+_default_registry = ServiceRegistry()
+
+
+def get_service_registry() -> ServiceRegistry:
+    return _default_registry
 
 
 @dataclass
@@ -28,8 +269,8 @@ class ThoughtStep:
     contradicts: Optional[List[int]] = None
     evidence: Optional[List[str]] = None
     assumptions: Optional[List[str]] = None
-    timestamp: Optional[str] = None
-
+    timestamp: str = None
+    
     def __post_init__(self):
         if self.timestamp is None:
             self.timestamp = datetime.now().isoformat()
@@ -44,154 +285,77 @@ class ThoughtStep:
 
 
 class ChainOfThought:
-    """
-    Chain of Thought processor that tracks reasoning steps and provides analysis.
-    """
-    
+
     def __init__(self):
         self.steps: List[ThoughtStep] = []
         self.metadata: Dict[str, Any] = {
             "created_at": datetime.now().isoformat(),
             "total_confidence": 0.0
         }
-    
-    def _validate_input(
+        self.validator = ParameterValidator()
+        self._lock = threading.RLock()  # For thread safety
+      
+    def _validate_and_extract_params(
         self,
-        thought: Any,
-        step_number: Any,
-        total_steps: Any,
-        next_step_needed: Any = True,
-        reasoning_stage: Any = "Analysis",
-        confidence: Any = 0.8,
-        dependencies: Any = None,
-        contradicts: Any = None,
-        evidence: Any = None,
-        assumptions: Any = None
+        thought: str,
+        step_number: int,
+        total_steps: int,
+        next_step_needed: bool,
+        reasoning_stage: str = "Analysis",
+        confidence: float = 0.8,
+        dependencies: Optional[List[int]] = None,
+        contradicts: Optional[List[int]] = None,
+        evidence: Optional[List[str]] = None,
+        assumptions: Optional[List[str]] = None
     ) -> Dict[str, Any]:
-        """
-        Validate all input parameters for security and reasonable limits.
+        """Validate and extract input parameters for chain step."""
+        return self.validator.validate_input(
+            thought=thought,
+            step_number=step_number,
+            total_steps=total_steps,
+            next_step_needed=next_step_needed,
+            reasoning_stage=reasoning_stage,
+            confidence=confidence,
+            dependencies=dependencies,
+            contradicts=contradicts,
+            evidence=evidence,
+            assumptions=assumptions
+        )
 
-        Accepts Any types intentionally — this is the runtime boundary validator
-        for untrusted LLM tool-call inputs where static types are not enforced.
-        Returns validated parameters with HTML escaping applied.
-        Raises ValueError with descriptive messages for validation failures.
-        """
+    def _create_thought_step(self, validated_params: Dict[str, Any]) -> ThoughtStep:
+        """Create a ThoughtStep instance from validated parameters."""
+        return ThoughtStep(
+            thought=validated_params["thought"],
+            step_number=validated_params["step_number"],
+            total_steps=validated_params["total_steps"],
+            reasoning_stage=validated_params["reasoning_stage"],
+            confidence=validated_params["confidence"],
+            next_step_needed=validated_params["next_step_needed"],
+            dependencies=validated_params["dependencies"],
+            contradicts=validated_params["contradicts"],
+            evidence=validated_params["evidence"],
+            assumptions=validated_params["assumptions"]
+        )
 
-        # Validate thought parameter
-        if not isinstance(thought, str):
-            raise ValueError("thought must be a string")
-        # Allow empty thoughts for backward compatibility, but limit length for security
-        if len(thought) > 10000:
-            raise ValueError("thought cannot exceed 10,000 characters")
-        
-        # Strip leading/trailing whitespace and HTML escape
-        thought_cleaned = html.escape(thought.strip())
-        
-        # Validate reasoning_stage 
-        if not isinstance(reasoning_stage, str):
-            raise ValueError("reasoning_stage must be a string")
-        if len(reasoning_stage) > 100:
-            raise ValueError("reasoning_stage cannot exceed 100 characters")
-        
-        # Only allow alphanumeric, spaces, underscores, and hyphens (no other whitespace chars)
-        if not re.match(r'^[a-zA-Z0-9 _-]+$', reasoning_stage):
-            raise ValueError("reasoning_stage can only contain letters, numbers, spaces, underscores, and hyphens")
-        
-        reasoning_stage_cleaned = reasoning_stage.strip()
-        
-        # Validate numeric parameters with relaxed limits for backward compatibility
-        if isinstance(step_number, bool) or not isinstance(step_number, int):
-            raise ValueError("step_number must be an integer")
-        # Allow reasonable range for step numbers (including negative for edge cases)
-        # Increased limit to support existing test cases but still prevent DoS attacks
-        if step_number < -10000 or step_number > 10000000:
-            raise ValueError("step_number must be between -10000 and 10000000")
+    def _handle_step_revision(self, step_number: int, validated_params: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle revision of an existing step."""
+        for i, step in enumerate(self.steps):
+            if step.step_number == step_number:
+                # This is a revision
+                self.steps[i] = self._create_thought_step(validated_params)
+                self._update_metadata()
+                return self._generate_feedback(self.steps[i], is_revision=True)
+        # If we reach here, the step number wasn't found - this shouldn't happen in normal operation
+        # But can occur in race conditions during concurrent access
+        return None
 
-        if isinstance(total_steps, bool) or not isinstance(total_steps, int):
-            raise ValueError("total_steps must be an integer")
-        # Allow reasonable range for total_steps
-        if total_steps < -10000 or total_steps > 10000000:
-            raise ValueError("total_steps must be between -10000 and 10000000")
-        
-        # Allow flexibility in step_number vs total_steps for backward compatibility
-        # (Only validate this for positive numbers where it makes logical sense)
-        if step_number > 0 and total_steps > 0 and step_number > total_steps:
-            raise ValueError("step_number cannot exceed total_steps")
-        
-        # Validate confidence - allow wider range for backward compatibility
-        # But still prevent extreme values that could cause issues
-        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
-            raise ValueError("confidence must be a number")
-        if isinstance(confidence, float) and (math.isnan(confidence) or math.isinf(confidence)):
-            raise ValueError("confidence must be a finite number")
-        if confidence < -100.0 or confidence > 100.0:
-            raise ValueError("confidence must be between -100.0 and 100.0")
-        
-        # Validate dependencies list
-        dependencies_cleaned = []
-        if dependencies is not None:
-            if not isinstance(dependencies, list):
-                raise ValueError("dependencies must be a list")
-            for dep in dependencies:
-                if not isinstance(dep, int) or dep < -10000 or dep > 10000000:
-                    raise ValueError("dependency values must be integers between -10000 and 10000000")
-                dependencies_cleaned.append(dep)
-        
-        # Validate contradicts list  
-        contradicts_cleaned = []
-        if contradicts is not None:
-            if not isinstance(contradicts, list):
-                raise ValueError("contradicts must be a list")
-            for cont in contradicts:
-                if not isinstance(cont, int) or cont < -10000 or cont > 10000000:
-                    raise ValueError("contradicts values must be integers between -10000 and 10000000")
-                contradicts_cleaned.append(cont)
-        
-        # Validate evidence list
-        evidence_cleaned = []
-        if evidence is not None:
-            if not isinstance(evidence, list):
-                raise ValueError("evidence must be a list")
-            if len(evidence) > 50:
-                raise ValueError("evidence list cannot exceed 50 items")
-            for item in evidence:
-                if not isinstance(item, str):
-                    raise ValueError("evidence items must be strings")
-                if len(item) > 500:
-                    raise ValueError("evidence items cannot exceed 500 characters")
-                evidence_cleaned.append(html.escape(item.strip()))
-        
-        # Validate assumptions list
-        assumptions_cleaned = []
-        if assumptions is not None:
-            if not isinstance(assumptions, list):
-                raise ValueError("assumptions must be a list")
-            if len(assumptions) > 50:
-                raise ValueError("assumptions list cannot exceed 50 items")
-            for item in assumptions:
-                if not isinstance(item, str):
-                    raise ValueError("assumptions items must be strings")  
-                if len(item) > 500:
-                    raise ValueError("assumptions items cannot exceed 500 characters")
-                assumptions_cleaned.append(html.escape(item.strip()))
-        
-        # Validate next_step_needed
-        if not isinstance(next_step_needed, bool):
-            raise ValueError("next_step_needed must be a boolean")
+    def _handle_new_step(self, validated_params: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle creation of a new step."""
+        step = self._create_thought_step(validated_params)
+        self.steps.append(step)
+        self._update_metadata()
+        return self._generate_feedback(step, is_revision=False)
 
-        return {
-            "thought": thought_cleaned,
-            "step_number": step_number,
-            "total_steps": total_steps,
-            "next_step_needed": next_step_needed,
-            "reasoning_stage": reasoning_stage_cleaned,
-            "confidence": float(confidence),
-            "dependencies": dependencies_cleaned if dependencies_cleaned else None,
-            "contradicts": contradicts_cleaned if contradicts_cleaned else None,
-            "evidence": evidence_cleaned if evidence_cleaned else None,
-            "assumptions": assumptions_cleaned if assumptions_cleaned else None
-        }
-    
     def add_step(
         self,
         thought: str,
@@ -207,72 +371,25 @@ class ChainOfThought:
     ) -> Dict[str, Any]:
         """
         Add a new step to the chain of thought.
-        
+
         Returns analysis and feedback for the step.
         """
-        
-        # Validate and sanitize all input parameters for security
-        validated_params = self._validate_input(
-            thought=thought,
-            step_number=step_number,
-            total_steps=total_steps,
-            next_step_needed=next_step_needed,
-            reasoning_stage=reasoning_stage,
-            confidence=confidence,
-            dependencies=dependencies,
-            contradicts=contradicts,
-            evidence=evidence,
-            assumptions=assumptions
-        )
+        with self._lock:
+            validated_params = self._validate_and_extract_params(
+                thought, step_number, total_steps, next_step_needed,
+                reasoning_stage, confidence, dependencies, contradicts,
+                evidence, assumptions
+            )
 
-        # Extract validated parameters
-        thought = validated_params["thought"]
-        step_number = validated_params["step_number"]
-        total_steps = validated_params["total_steps"]
-        next_step_needed = validated_params["next_step_needed"]
-        reasoning_stage = validated_params["reasoning_stage"]
-        confidence = validated_params["confidence"]
-        dependencies = validated_params["dependencies"]
-        contradicts = validated_params["contradicts"]
-        evidence = validated_params["evidence"]
-        assumptions = validated_params["assumptions"]
-        
-        # Check if this is a revision of an existing step
-        for i, step in enumerate(self.steps):
-            if step.step_number == step_number:
-                # This is a revision
-                self.steps[i] = ThoughtStep(
-                    thought=thought,
-                    step_number=step_number,
-                    total_steps=total_steps,
-                    reasoning_stage=reasoning_stage,
-                    confidence=confidence,
-                    next_step_needed=next_step_needed,
-                    dependencies=dependencies,
-                    contradicts=contradicts,
-                    evidence=evidence,
-                    assumptions=assumptions
-                )
-                self._update_metadata()
-                return self._generate_feedback(self.steps[i], is_revision=True)
-        
-        step = ThoughtStep(
-            thought=thought,
-            step_number=step_number,
-            total_steps=total_steps,
-            reasoning_stage=reasoning_stage,
-            confidence=confidence,
-            next_step_needed=next_step_needed,
-            dependencies=dependencies,
-            contradicts=contradicts,
-            evidence=evidence,
-            assumptions=assumptions
-        )
-        
-        self.steps.append(step)
-        self._update_metadata()
-        
-        return self._generate_feedback(step, is_revision=False)
+            # Check if this is a revision of an existing step
+            revision_result = self._handle_step_revision(
+                validated_params["step_number"], validated_params
+            )
+            if revision_result:
+                return revision_result
+
+            # Handle new step
+            return self._handle_new_step(validated_params)
     
     def _generate_feedback(self, step: ThoughtStep, is_revision: bool) -> Dict[str, Any]:
         """Generate feedback and guidance for the thought step."""
@@ -301,7 +418,7 @@ class ChainOfThought:
         if step.contradicts:
             feedback_parts.append(f"Contradicts steps: {', '.join(map(str, step.contradicts))}. Consider reconciliation.")
         
-        progress = step.step_number / step.total_steps if step.total_steps != 0 else 0.0
+        progress = step.step_number / step.total_steps
         if progress >= 0.8 and step.next_step_needed:
             feedback_parts.append("Approaching conclusion. Consider synthesis of insights.")
         
@@ -325,101 +442,97 @@ class ChainOfThought:
     
     def generate_summary(self) -> Dict[str, Any]:
         """Generate a comprehensive summary of the chain of thought."""
-        
-        if not self.steps:
-            return {
-                "status": "empty",
-                "message": "No thought steps have been recorded yet."
-            }
-        
-        # Organize by stage
-        stages = {}
-        for step in self.steps:
-            if step.reasoning_stage not in stages:
-                stages[step.reasoning_stage] = []
-            stages[step.reasoning_stage].append(step)
-        
-        all_evidence = set()
-        all_assumptions = set()
-        contradiction_pairs = []
-        
-        for step in self.steps:
-            all_evidence.update(step.evidence or [])
-            all_assumptions.update(step.assumptions or [])
-            if step.contradicts:
-                for contradicted in step.contradicts:
-                    contradiction_pairs.append((step.step_number, contradicted))
-        
-        confidence_by_stage = {}
-        for stage, steps_in_stage in stages.items():
-            avg_confidence = sum(s.confidence for s in steps_in_stage) / len(steps_in_stage)
-            confidence_by_stage[stage] = round(avg_confidence, 3)
-        
-        # Build content_synthesis: full thought text (not truncated) grouped by stage
-        content_synthesis: Dict[str, List[str]] = {}
-        for stage, steps_in_stage in stages.items():
-            content_synthesis[stage] = [s.thought for s in steps_in_stage]
-
-        # Build completion_status against the 5 canonical reasoning stages
-        required_stages = [
-            "Problem Definition",
-            "Research",
-            "Analysis",
-            "Synthesis",
-            "Conclusion"
-        ]
-        stages_present = set(stages.keys())
-        stages_missing = [s for s in required_stages if s not in stages_present]
-        stages_found = [s for s in required_stages if s in stages_present]
-        percent_complete = round(len(stages_found) / len(required_stages) * 100.0, 1)
-        completion_status = {
-            "has_all_stages": len(stages_missing) == 0,
-            "percent_complete": percent_complete,
-            "stages_required": required_stages,
-            "stages_missing": stages_missing
-        }
-
-        return {
-            "status": "success",
-            "total_steps": len(self.steps),
-            "stages_covered": list(stages.keys()),
-            "overall_confidence": self.metadata["total_confidence"],
-            "confidence_by_stage": confidence_by_stage,
-            "content_synthesis": content_synthesis,
-            "completion_status": completion_status,
-            "chain": [
-                {
-                    "step": s.step_number,
-                    "stage": s.reasoning_stage,
-                    "thought_preview": s.thought[:100] + "..." if len(s.thought) > 100 else s.thought,
-                    "confidence": s.confidence,
-                    "has_evidence": bool(s.evidence),
-                    "has_assumptions": bool(s.assumptions)
+        with self._lock:
+            if not self.steps:
+                return {
+                    "status": "empty",
+                    "message": "No thought steps have been recorded yet."
                 }
-                for s in sorted(self.steps, key=lambda x: x.step_number)
-            ],
-            "insights": {
-                "total_evidence": list(all_evidence),
-                "total_assumptions": list(all_assumptions),
-                "contradiction_pairs": contradiction_pairs,
-                "high_confidence_steps": [s.step_number for s in self.steps if s.confidence >= 0.8],
-                "low_confidence_steps": [s.step_number for s in self.steps if s.confidence < 0.5]
-            },
-            "metadata": self.metadata
-        }
+
+            # Organize by stage
+            stages = {}
+            for step in self.steps:
+                if step.reasoning_stage not in stages:
+                    stages[step.reasoning_stage] = []
+                stages[step.reasoning_stage].append(step)
+
+            all_evidence = set()
+            all_assumptions = set()
+            contradiction_pairs = []
+
+            for step in self.steps:
+                all_evidence.update(step.evidence or [])
+                all_assumptions.update(step.assumptions or [])
+                if step.contradicts:
+                    for contradicted in step.contradicts:
+                        contradiction_pairs.append((step.step_number, contradicted))
+
+            confidence_by_stage = {}
+            for stage, steps_in_stage in stages.items():
+                avg_confidence = sum(s.confidence for s in steps_in_stage) / len(steps_in_stage)
+                confidence_by_stage[stage] = round(avg_confidence, 3)
+
+            # Build content_synthesis: full thought text grouped by stage
+            content_synthesis: Dict[str, List[str]] = {}
+            for stage, steps_in_stage in stages.items():
+                content_synthesis[stage] = [s.thought for s in steps_in_stage]
+
+            # Build completion_status against the 5 canonical reasoning stages
+            required_stages = [
+                "Problem Definition", "Research", "Analysis", "Synthesis", "Conclusion"
+            ]
+            stages_present = set(stages.keys())
+            stages_missing = [s for s in required_stages if s not in stages_present]
+            stages_found = [s for s in required_stages if s in stages_present]
+            completion_status = {
+                "has_all_stages": len(stages_missing) == 0,
+                "percent_complete": round(len(stages_found) / len(required_stages) * 100.0, 1),
+                "stages_required": required_stages,
+                "stages_missing": stages_missing
+            }
+
+            return {
+                "status": "success",
+                "total_steps": len(self.steps),
+                "stages_covered": list(stages.keys()),
+                "overall_confidence": self.metadata["total_confidence"],
+                "confidence_by_stage": confidence_by_stage,
+                "content_synthesis": content_synthesis,
+                "completion_status": completion_status,
+                "chain": [
+                    {
+                        "step": s.step_number,
+                        "stage": s.reasoning_stage,
+                        "thought_preview": s.thought[:100] + "..." if len(s.thought) > 100 else s.thought,
+                        "confidence": s.confidence,
+                        "has_evidence": bool(s.evidence),
+                        "has_assumptions": bool(s.assumptions)
+                    }
+                    for s in sorted(self.steps, key=lambda x: x.step_number)
+                ],
+                "insights": {
+                    "total_evidence": list(all_evidence),
+                    "total_assumptions": list(all_assumptions),
+                    "contradiction_pairs": contradiction_pairs,
+                    "high_confidence_steps": [s.step_number for s in self.steps if s.confidence >= 0.8],
+                    "low_confidence_steps": [s.step_number for s in self.steps if s.confidence < 0.5]
+                },
+                "metadata": self.metadata
+            }
     
     def clear_chain(self) -> Dict[str, Any]:
         """Clear all steps and reset the chain of thought."""
-        self.steps.clear()
-        self.metadata = {
-            "created_at": datetime.now().isoformat(),
-            "total_confidence": 0.0
-        }
+        with self._lock:
+            self.steps.clear()
+            self.metadata = {
+                "created_at": datetime.now().isoformat(),
+                "total_confidence": 0.0
+            }
 
-        return {
-            "status": "success",
-            "message": "Chain of thought cleared. Ready for new reasoning sequence."
-        }
+            return {
+                "status": "success",
+                "message": "Chain of thought cleared. Ready for new reasoning sequence."
+            }
 
     @staticmethod
     def _validate_file_path(file_path: str) -> None:
@@ -461,9 +574,6 @@ class ChainOfThought:
         Step numbers are preserved as-is, including non-sequential numbering.
         Does NOT use add_step() to avoid triggering revision logic.
 
-        Only files produced by this library's export_chain are guaranteed to have
-        pre-sanitized content.
-
         Args:
             file_path: Path to the JSON file previously produced by export_chain.
 
@@ -495,9 +605,7 @@ class ChainOfThought:
         if len(steps_data) > MAX_IMPORT_STEPS:
             return {
                 "status": "error",
-                "message": (
-                    f"Import rejected: {len(steps_data)} steps exceeds maximum of {MAX_IMPORT_STEPS}"
-                )
+                "message": f"Import rejected: {len(steps_data)} steps exceeds maximum of {MAX_IMPORT_STEPS}"
             }
 
         required_keys = {"thought", "step_number", "total_steps", "next_step_needed"}
@@ -547,7 +655,6 @@ class ChainOfThought:
                         "message": f"Invalid step at index {idx}: 'confidence' must be a finite number"
                     }
 
-            # Validate optional string field: reasoning_stage
             reasoning_stage_val = d.get("reasoning_stage", "Analysis")
             if not isinstance(reasoning_stage_val, str):
                 return {
@@ -555,7 +662,6 @@ class ChainOfThought:
                     "message": f"Invalid step at index {idx}: 'reasoning_stage' must be a string"
                 }
 
-            # Validate optional list-of-int fields: dependencies, contradicts
             for int_list_field in ("dependencies", "contradicts"):
                 field_val = d.get(int_list_field)
                 if field_val is not None:
@@ -574,7 +680,6 @@ class ChainOfThought:
                                 )
                             }
 
-            # Validate optional list-of-str fields: evidence, assumptions
             for str_list_field in ("evidence", "assumptions"):
                 field_val = d.get(str_list_field)
                 if field_val is not None:
@@ -593,7 +698,6 @@ class ChainOfThought:
                                 )
                             }
 
-            # Validate optional timestamp field
             timestamp_val = d.get("timestamp")
             if timestamp_val is not None and not isinstance(timestamp_val, str):
                 return {
@@ -601,10 +705,8 @@ class ChainOfThought:
                     "message": f"Invalid step at index {idx}: 'timestamp' must be a string or null"
                 }
 
-            # Sanitize text fields matching add_step behavior
             thought_val = html.escape(d["thought"].strip())
 
-            # Apply same reasoning_stage validation as _validate_input
             reasoning_stage_val_stripped = reasoning_stage_val.strip()
             if len(reasoning_stage_val_stripped) > 100:
                 return {
@@ -614,10 +716,12 @@ class ChainOfThought:
             if not re.match(r'^[a-zA-Z0-9 _-]+$', reasoning_stage_val_stripped):
                 return {
                     "status": "error",
-                    "message": f"Invalid step at index {idx}: 'reasoning_stage' can only contain letters, numbers, spaces, underscores, and hyphens"
+                    "message": (
+                        f"Invalid step at index {idx}: 'reasoning_stage' can only contain "
+                        "letters, numbers, spaces, underscores, and hyphens"
+                    )
                 }
 
-            # HTML escape evidence and assumptions items
             evidence_list = d.get("evidence") or []
             evidence_sanitized = [html.escape(item.strip()) for item in evidence_list]
 
@@ -662,8 +766,8 @@ class Hypothesis:
     testability_score: float = 0.7
     reasoning: str = ""
     evidence_requirements: Optional[List[str]] = None
-    timestamp: Optional[str] = None
-
+    timestamp: str = None
+    
     def __post_init__(self):
         if self.timestamp is None:
             self.timestamp = datetime.now().isoformat()
@@ -672,9 +776,6 @@ class Hypothesis:
 
 
 class HypothesisGenerator:
-    """
-    Hypothesis generator that creates diverse explanations for observations.
-    """
     
     def __init__(self):
         self.hypotheses: List[Hypothesis] = []
@@ -703,8 +804,8 @@ class HypothesisGenerator:
         # Ensure we don't generate more than requested
         types_to_generate = hypothesis_types[:hypothesis_count]
         
-        for hypothesis_type in types_to_generate:
-            hypothesis = self._generate_hypothesis_by_type(observation, hypothesis_type)
+        for i, hypothesis_type in enumerate(types_to_generate):
+            hypothesis = self._generate_hypothesis_by_type(observation, hypothesis_type, i + 1)
             self.hypotheses.append(hypothesis)
         
         # Rank by testability
@@ -737,7 +838,7 @@ class HypothesisGenerator:
             "metadata": self.metadata
         }
     
-    def _generate_hypothesis_by_type(self, observation: str, hypothesis_type: str) -> Hypothesis:
+    def _generate_hypothesis_by_type(self, observation: str, hypothesis_type: str, rank: int) -> Hypothesis:
         """Generate a hypothesis of a specific type."""
         
         if hypothesis_type == "scientific":
@@ -786,8 +887,6 @@ class HypothesisGenerator:
             )
 
 
-# Global instance for simple usage
-_hypothesis_generator = HypothesisGenerator()
 
 
 @dataclass
@@ -800,8 +899,8 @@ class Assumption:
     is_critical: bool = False
     reasoning: str = ""
     validation_methods: Optional[List[str]] = None
-    timestamp: Optional[str] = None
-
+    timestamp: str = None
+    
     def __post_init__(self):
         if self.timestamp is None:
             self.timestamp = datetime.now().isoformat()
@@ -812,9 +911,6 @@ class Assumption:
 
 
 class AssumptionMapper:
-    """
-    Assumption mapper that identifies and categorizes assumptions in statements.
-    """
     
     def __init__(self):
         self.assumptions: List[Assumption] = []
@@ -1053,8 +1149,6 @@ class AssumptionMapper:
         return graph
 
 
-# Global instance for simple usage
-_assumption_mapper = AssumptionMapper()
 
 
 @dataclass
@@ -1066,8 +1160,8 @@ class ConfidenceAssessment:
     overconfidence_indicators: Optional[List[str]] = None
     calibration_reasoning: str = ""
     uncertainty_factors: Optional[List[str]] = None
-    timestamp: Optional[str] = None
-
+    timestamp: str = None
+    
     def __post_init__(self):
         if self.timestamp is None:
             self.timestamp = datetime.now().isoformat()
@@ -1082,9 +1176,6 @@ class ConfidenceAssessment:
 
 
 class ConfidenceCalibrator:
-    """
-    Confidence calibrator that adjusts overconfident predictions and provides uncertainty bounds.
-    """
     
     def __init__(self):
         self.assessments: List[ConfidenceAssessment] = []
@@ -1177,69 +1268,57 @@ class ConfidenceCalibrator:
         
         return round(adjusted_confidence, 3)
     
-    def calibrate_confidence(
-        self,
-        prediction: str,
-        initial_confidence: float,
-        context: str = ""
-    ) -> Dict[str, Any]:
-        """
-        Calibrate confidence for the given prediction.
-        
-        Args:
-            prediction: The prediction or claim to calibrate
-            initial_confidence: Initial confidence level (0.0-1.0)
-            context: Optional additional context for calibration
-            
-        Returns calibrated confidence with uncertainty bands and reasoning.
-        """
-        
-        # Validate inputs
-        initial_confidence = max(0.0, min(1.0, initial_confidence))
-        
-        # Detect overconfidence patterns
-        overconfidence_analysis = self.detect_overconfidence_patterns(prediction, initial_confidence)
-        
-        # Apply calibration adjustment
-        calibrated_confidence = self.apply_calibration_adjustment(
-            initial_confidence, 
-            overconfidence_analysis["overconfidence_score"]
-        )
-        
-        # Calculate uncertainty bands
-        uncertainty_band = self.calculate_uncertainty_bands(calibrated_confidence)
-        
-        # Identify uncertainty factors
+    def _identify_uncertainty_factors(self, prediction: str, context: str) -> List[str]:
+        """Identify uncertainty factors based on prediction and context."""
         uncertainty_factors = []
-        
-        # Add context-specific uncertainty factors
+
+        # Temporal uncertainty
         if "future" in prediction.lower() or any(word in prediction.lower() for word in ["will", "going to", "by 20"]):
             uncertainty_factors.append("Temporal uncertainty - future events")
-        
+
+        # Technology uncertainty
         if "technology" in prediction.lower() or "ai" in prediction.lower():
             uncertainty_factors.append("Technology uncertainty - rapid change domain")
-        
-        if len(prediction.split()) > 20:
+
+        # Complexity uncertainty
+        if len(prediction.split()) > MAX_PREDICTION_WORDS:
             uncertainty_factors.append("Complexity uncertainty - multiple interconnected factors")
-        
+
+        # Data uncertainty
         if context and "limited data" in context.lower():
             uncertainty_factors.append("Data uncertainty - limited information available")
-        
-        # Generate calibration reasoning
-        adjustment_magnitude = abs(calibrated_confidence - initial_confidence)
-        
-        if adjustment_magnitude > 0.15:
+
+        return uncertainty_factors
+
+    def _generate_calibration_reasoning(
+        self,
+        adjustment_magnitude: float,
+        risk_level: str
+    ) -> str:
+        """Generate reasoning text for confidence calibration."""
+        if adjustment_magnitude > HIGH_CONFIDENCE_THRESHOLD:
             reasoning = f"Significant confidence reduction ({adjustment_magnitude:.2f}) due to strong overconfidence indicators."
-        elif adjustment_magnitude > 0.05:
+        elif adjustment_magnitude > MEDIUM_CONFIDENCE_THRESHOLD:
             reasoning = f"Moderate confidence adjustment ({adjustment_magnitude:.2f}) due to uncertainty factors."
         else:
             reasoning = f"Minor confidence adjustment ({adjustment_magnitude:.2f}) - original estimate reasonably calibrated."
-        
-        if overconfidence_analysis["risk_level"] == "high":
+
+        if risk_level == "high":
             reasoning += " High overconfidence risk detected."
-        
-        # Create assessment
-        assessment = ConfidenceAssessment(
+
+        return reasoning
+
+    def _create_confidence_assessment(
+        self,
+        initial_confidence: float,
+        calibrated_confidence: float,
+        uncertainty_band: tuple,
+        overconfidence_analysis: Dict[str, Any],
+        reasoning: str,
+        uncertainty_factors: List[str]
+    ) -> ConfidenceAssessment:
+        """Create a ConfidenceAssessment instance."""
+        return ConfidenceAssessment(
             original_confidence=initial_confidence,
             calibrated_confidence=calibrated_confidence,
             confidence_band=uncertainty_band,
@@ -1247,11 +1326,20 @@ class ConfidenceCalibrator:
             calibration_reasoning=reasoning,
             uncertainty_factors=uncertainty_factors
         )
-        
-        self.assessments.append(assessment)
-        self.metadata["calibration_count"] += 1
-        self.metadata["last_calibrated"] = datetime.now().isoformat()
-        
+
+    def _build_calibration_response(
+        self,
+        prediction: str,
+        initial_confidence: float,
+        calibrated_confidence: float,
+        uncertainty_band: tuple,
+        overconfidence_analysis: Dict[str, Any],
+        uncertainty_factors: List[str],
+        reasoning: str
+    ) -> Dict[str, Any]:
+        """Build the calibration response dictionary."""
+        adjustment_magnitude = abs(calibrated_confidence - initial_confidence)
+
         return {
             "status": "success",
             "prediction": prediction,
@@ -1281,111 +1369,415 @@ class ConfidenceCalibrator:
             "metadata": self.metadata
         }
 
+    def calibrate_confidence(
+        self,
+        prediction: str,
+        initial_confidence: float,
+        context: str = ""
+    ) -> Dict[str, Any]:
+        """
+        Calibrate confidence for the given prediction.
 
-# Global instance for simple usage
-_confidence_calibrator = ConfidenceCalibrator()
+        Args:
+            prediction: The prediction or claim to calibrate
+            initial_confidence: Initial confidence level (0.0-1.0)
+            context: Optional additional context for calibration
+
+        Returns calibrated confidence with uncertainty bands and reasoning.
+        """
+        # Validate inputs
+        initial_confidence = max(0.0, min(1.0, initial_confidence))
+
+        # Analyze overconfidence patterns
+        overconfidence_analysis = self.detect_overconfidence_patterns(prediction, initial_confidence)
+
+        # Apply calibration adjustment
+        calibrated_confidence = self.apply_calibration_adjustment(
+            initial_confidence,
+            overconfidence_analysis["overconfidence_score"]
+        )
+
+        # Calculate uncertainty bands
+        uncertainty_band = self.calculate_uncertainty_bands(calibrated_confidence)
+
+        # Identify uncertainty factors
+        uncertainty_factors = self._identify_uncertainty_factors(prediction, context)
+
+        # Generate reasoning
+        adjustment_magnitude = abs(calibrated_confidence - initial_confidence)
+        reasoning = self._generate_calibration_reasoning(
+            adjustment_magnitude, overconfidence_analysis["risk_level"]
+        )
+
+        # Create assessment and update metadata
+        assessment = self._create_confidence_assessment(
+            initial_confidence, calibrated_confidence, uncertainty_band,
+            overconfidence_analysis, reasoning, uncertainty_factors
+        )
+
+        self.assessments.append(assessment)
+        self.metadata["calibration_count"] += 1
+        self.metadata["last_calibrated"] = datetime.now().isoformat()
+
+        # Build and return response
+        return self._build_calibration_response(
+            prediction, initial_confidence, calibrated_confidence,
+            uncertainty_band, overconfidence_analysis, uncertainty_factors, reasoning
+        )
+
+
 
 
 # Security helper function for safe JSON serialization
 def _safe_json_dumps(data: Any, indent: int = 2) -> str:
     """
-    Safely serialize data to JSON, preventing injection attacks.
+    Safely serialize data to JSON with strict security controls.
+
+    Implements defense-in-depth approach with multiple security layers:
+    1. Whitelist-only type checking
+    2. Sensitive key filtering
+    3. Dangerous content detection
+    4. Generic error handling (no information disclosure)
 
     Args:
         data: Data to serialize
         indent: JSON indentation level
 
     Returns:
-        Safe JSON string
+        Safe JSON string with no sensitive data exposed
     """
     try:
-        # Validate that we're dealing with safe data structures
-        if not isinstance(data, (dict, list, str, int, float, bool, type(None))):
-            # Convert dataclass or other objects safely
-            if hasattr(data, '__dict__'):
-                data = asdict(data) if hasattr(data, '__dataclass_fields__') else data.__dict__
-            else:
-                data = str(data)
+        # Define whitelist of safe types (defense-in-depth)
+        SAFE_TYPES = (dict, list, str, int, float, bool, type(None))
 
-        # Use secure JSON parameters to prevent injection
-        return json.dumps(
-            data,
-            indent=indent,
-            ensure_ascii=True,  # Prevent Unicode injection attacks
-            sort_keys=True,  # Consistent output, prevent structure manipulation
-            allow_nan=False  # Prevent RFC-non-compliant NaN/Infinity in output
-        )
-    except (TypeError, ValueError, OverflowError) as e:
-        # Handle serialization errors gracefully
-        error_data = {
-            "status": "error",
-            "message": "JSON serialization failed",
-            "error_type": type(e).__name__
+        # Define sensitive keys to filter (case-insensitive)
+        SENSITIVE_KEYS = {
+            'password', 'passwd', 'pwd', 'secret', 'token', 'key', 'apikey', 'api_key',
+            'auth', 'authorization', 'auth_token', 'session', 'session_id',
+            'credit_card', 'card', 'ssn', 'social_security', 'pin',
+            'credential', 'private', 'confidential', 'internal'
         }
-        return json.dumps(
-            error_data,
+
+        # Define dangerous content patterns
+        DANGEROUS_PATTERNS = {
+            '__import__', 'eval(', 'exec(', 'open(', 'file(', 'input(',
+            'subprocess', 'os.system', 'shell_exec', 'DROP TABLE', 'SELECT *',
+            '<script', 'javascript:', 'data:', 'vbscript:', 'onload=', 'onerror='
+        }
+
+        def sanitize(obj, depth=0):
+            """
+            Recursively sanitize object for safe serialization.
+            Uses whitelist approach with depth limiting to prevent recursion attacks.
+            """
+            # Prevent deep recursion attacks
+            if depth > MAX_RECURSION_DEPTH:
+                return {"status": "error", "message": "Data too deep"}
+
+            if isinstance(obj, SAFE_TYPES):
+                if isinstance(obj, dict):
+                    sanitized_dict = {}
+                    for key, value in obj.items():
+                        # Filter sensitive keys (case-insensitive)
+                        key_lower = str(key).lower()
+                        is_sensitive = any(sensitive in key_lower for sensitive in SENSITIVE_KEYS)
+
+                        if is_sensitive:
+                            # Replace sensitive values with placeholder
+                            sanitized_dict[key] = "[REDACTED]"
+                        else:
+                            # Recursively sanitize values
+                            sanitized_dict[key] = sanitize(value, depth + 1)
+
+                    return sanitized_dict
+
+                elif isinstance(obj, list):
+                    # Sanitize list elements recursively
+                    try:
+                        return [sanitize(item, depth + 1) for item in obj[:MAX_LIST_SIZE]]  # Limit list size
+                    except Exception:
+                        return [{"status": "error", "message": "List processing failed"}]
+
+                elif isinstance(obj, str):
+                    # Check for dangerous content in strings
+                    content_lower = obj.lower()
+                    for pattern in DANGEROUS_PATTERNS:
+                        if pattern in content_lower:
+                            return "[FILTERED_CONTENT]"
+                    return obj[:MAX_STRING_LENGTH]  # Limit string length
+
+                elif isinstance(obj, (int, float)):
+                    # Check for dangerous numeric values
+                    if isinstance(obj, float):
+                        if obj != obj:  # NaN
+                            return 0.0
+                        if obj in (float('inf'), float('-inf')):  # Infinity
+                            return 0.0
+                    return obj
+
+                elif isinstance(obj, bool) or obj is None:
+                    return obj
+
+            else:
+                # Convert unknown objects to safe string representation
+                # NEVER expose internal structure or methods
+                obj_type = type(obj).__name__
+                return f"[Object: {obj_type}]"
+
+        # Apply sanitization
+        sanitized_data = sanitize(data)
+
+        # Final security check on result size
+        json_string = json.dumps(
+            sanitized_data,
             indent=indent,
             ensure_ascii=True,
+            separators=(',', ': '),
             sort_keys=True
         )
 
+        # Prevent DoS through huge JSON output
+        if len(json_string) > MAX_JSON_SIZE:  # Prevent DoS through huge JSON output
+            return json.dumps({
+                "status": "error",
+                "message": "Data processing failed"
+            })
 
-# Global instance for simple usage
-_chain_processor = ChainOfThought()
+        return json_string
+
+    except Exception:
+        # NEVER expose internal error details - security principle
+        # No information disclosure about internal errors, types, or stack traces
+        return json.dumps({
+            "status": "error",
+            "message": "Data processing failed"
+        })
 
 
+class RateLimiter:
+    """
+    Thread-safe rate limiting to prevent DoS attacks on handler functions.
+
+    Implements token bucket algorithm with multiple time windows:
+    - Burst limit: Immediate consecutive requests
+    - Per-minute limit: Requests within 1-minute window
+    - Per-hour limit: Requests within 1-hour window
+
+    Each client is tracked separately to ensure isolation.
+    """
+
+    def __init__(self, max_requests_per_minute: int = DEFAULT_MAX_REQUESTS_PER_MINUTE, max_requests_per_hour: int = DEFAULT_MAX_REQUESTS_PER_HOUR, max_burst_size: int = DEFAULT_MAX_BURST_SIZE):
+        """
+        Initialize rate limiter with configurable limits.
+
+        Args:
+            max_requests_per_minute: Maximum requests per minute per client
+            max_requests_per_hour: Maximum requests per hour per client
+            max_burst_size: Maximum consecutive immediate requests per client
+        """
+        self.max_requests_per_minute = max_requests_per_minute
+        self.max_requests_per_hour = max_requests_per_hour
+        self.max_burst_size = max_burst_size
+
+        # Track request counts and timestamps per client
+        self._request_counts: Dict[str, int] = {}  # Current burst counts
+        self._request_timestamps: Dict[str, List[float]] = {}  # Timestamps for sliding windows
+        self._lock = threading.RLock()  # Thread-safe access
+
+    def _cleanup_old_timestamps(self, client_id: str, current_time: float) -> None:
+        """Remove timestamps older than 1 hour from tracking."""
+        if client_id not in self._request_timestamps:
+            return
+
+        # Remove timestamps older than 1 hour
+        one_hour_ago = current_time - 3600.0
+        timestamps = self._request_timestamps[client_id]
+        self._request_timestamps[client_id] = [
+            ts for ts in timestamps if ts > one_hour_ago
+        ]
+
+        # Clean up empty timestamp lists
+        if not self._request_timestamps[client_id]:
+            del self._request_timestamps[client_id]
+
+    def _get_minute_count(self, client_id: str, current_time: float) -> int:
+        """Count requests in the last minute for a client."""
+        if client_id not in self._request_timestamps:
+            return 0
+
+        one_minute_ago = current_time - 60.0
+        return sum(1 for ts in self._request_timestamps[client_id] if ts > one_minute_ago)
+
+    def _get_hour_count(self, client_id: str, current_time: float) -> int:
+        """Count requests in the last hour for a client."""
+        if client_id not in self._request_timestamps:
+            return 0
+
+        one_hour_ago = current_time - 3600.0
+        return sum(1 for ts in self._request_timestamps[client_id] if ts > one_hour_ago)
+
+    def check_rate_limit(self, client_id: str = "default") -> bool:
+        """
+        Check if a request from the client should be allowed.
+
+        Args:
+            client_id: Unique identifier for the client (IP address, session ID, etc.)
+
+        Returns:
+            True if request should be allowed, False if rate limited
+        """
+        current_time = time.time()
+
+        with self._lock:
+            # Clean up old timestamps
+            self._cleanup_old_timestamps(client_id, current_time)
+
+            # Check burst limit (immediate consecutive requests)
+            current_burst = self._request_counts.get(client_id, 0)
+            if current_burst >= self.max_burst_size:
+                return False
+
+            # Check per-minute limit
+            minute_count = self._get_minute_count(client_id, current_time)
+            if minute_count >= self.max_requests_per_minute:
+                return False
+
+            # Check per-hour limit
+            hour_count = self._get_hour_count(client_id, current_time)
+            if hour_count >= self.max_requests_per_hour:
+                return False
+
+            # Request is allowed - update tracking
+            self._request_counts[client_id] = current_burst + 1
+
+            # Add timestamp for sliding window tracking
+            if client_id not in self._request_timestamps:
+                self._request_timestamps[client_id] = []
+            self._request_timestamps[client_id].append(current_time)
+
+            return True
+
+    def get_retry_after(self, client_id: str = "default") -> Optional[int]:
+        """
+        Get suggested retry-after seconds for a rate-limited client.
+
+        Args:
+            client_id: Unique identifier for the client
+
+        Returns:
+            Seconds to wait before retry, or None if not rate limited
+        """
+        current_time = time.time()
+
+        with self._lock:
+            # Check burst limit
+            current_burst = self._request_counts.get(client_id, 0)
+            if current_burst >= self.max_burst_size:
+                return 1  # Very short delay for burst limit
+
+            # Check minute limit
+            minute_count = self._get_minute_count(client_id, current_time)
+            if minute_count >= self.max_requests_per_minute:
+                if client_id in self._request_timestamps and self._request_timestamps[client_id]:
+                    oldest_timestamp = min(self._request_timestamps[client_id])
+                    retry_after = int(60 - (current_time - oldest_timestamp)) + 1
+                    return max(retry_after, 1)
+
+            # Check hour limit
+            hour_count = self._get_hour_count(client_id, current_time)
+            if hour_count >= self.max_requests_per_hour:
+                if client_id in self._request_timestamps and self._request_timestamps[client_id]:
+                    oldest_timestamp = min(self._request_timestamps[client_id])
+                    retry_after = int(3600 - (current_time - oldest_timestamp)) + 1
+                    return max(retry_after, 60)  # At least 1 minute
+
+            return None  # Not rate limited
+
+    def reset_client(self, client_id: str = "default") -> None:
+        """Reset rate limiting tracking for a specific client."""
+        with self._lock:
+            if client_id in self._request_counts:
+                del self._request_counts[client_id]
+            if client_id in self._request_timestamps:
+                del self._request_timestamps[client_id]
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get current rate limiting statistics."""
+        with self._lock:
+            return {
+                "active_clients": len(self._request_counts),
+                "total_tracked_timestamps": sum(len(timestamps) for timestamps in self._request_timestamps.values()),
+                "max_requests_per_minute": self.max_requests_per_minute,
+                "max_requests_per_hour": self.max_requests_per_hour,
+                "max_burst_size": self.max_burst_size
+            }
+
+
+# Global rate limiter instance
+_global_rate_limiter: Optional[RateLimiter] = None
+_rate_limiter_lock = threading.Lock()
+
+
+def get_global_rate_limiter() -> RateLimiter:
+    """Get or create the global rate limiter instance."""
+    global _global_rate_limiter
+
+    if _global_rate_limiter is None:
+        with _rate_limiter_lock:
+            if _global_rate_limiter is None:  # Double-check
+                _global_rate_limiter = RateLimiter()
+
+    return _global_rate_limiter
+
+
+def set_global_rate_limiter(limiter: RateLimiter) -> None:
+    """Set a custom global rate limiter instance."""
+    global _global_rate_limiter
+
+    with _rate_limiter_lock:
+        _global_rate_limiter = limiter
+
+
+# Initialize default service factories now that all classes are defined
+_default_registry.initialize_default_services()
+
+# Global instance for simple usage - now using the service registry
+_chain_processor = _default_registry.get_service('chain_of_thought')
+_hypothesis_generator = _default_registry.get_service('hypothesis_generator')
+_assumption_mapper = _default_registry.get_service('assumption_mapper')
+_confidence_calibrator = _default_registry.get_service('confidence_calibrator')
+
+# Import security module components
+from .security import RequestValidator, SecurityValidationError, default_validator
+
+
+# =============================================================================
+# CONVENIENCE HANDLER FUNCTIONS
+# =============================================================================
+
+# Simple convenience wrappers using the generic handler factory
 def chain_of_thought_step_handler(**kwargs) -> str:
-    """Handler function for the chain_of_thought_step tool."""
-    try:
-        result = _chain_processor.add_step(**kwargs)
-        return _safe_json_dumps(result, indent=2)
-    except Exception as e:
-        return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+    return create_generic_handler('chain_of_thought_step')(**kwargs)
 
 
-def get_chain_summary_handler() -> str:
-    """Handler function for the get_chain_summary tool."""
-    try:
-        result = _chain_processor.generate_summary()
-        return _safe_json_dumps(result, indent=2)
-    except Exception as e:
-        return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+def get_chain_summary_handler(**kwargs) -> str:
+    return create_generic_handler('get_chain_summary')(**kwargs)
 
 
-def clear_chain_handler() -> str:
-    """Handler function for the clear_chain tool."""
-    try:
-        result = _chain_processor.clear_chain()
-        return _safe_json_dumps(result, indent=2)
-    except Exception as e:
-        return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+def clear_chain_handler(**kwargs) -> str:
+    return create_generic_handler('clear_chain')(**kwargs)
 
 
 def generate_hypotheses_handler(**kwargs) -> str:
-    """Handler function for the generate_hypotheses tool."""
-    try:
-        result = _hypothesis_generator.generate_hypotheses(**kwargs)
-        return _safe_json_dumps(result, indent=2)
-    except Exception as e:
-        return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+    return create_generic_handler('generate_hypotheses')(**kwargs)
 
 
 def map_assumptions_handler(**kwargs) -> str:
-    """Handler function for the map_assumptions tool."""
-    try:
-        result = _assumption_mapper.map_assumptions(**kwargs)
-        return _safe_json_dumps(result, indent=2)
-    except Exception as e:
-        return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+    return create_generic_handler('map_assumptions')(**kwargs)
 
 
 def calibrate_confidence_handler(**kwargs) -> str:
-    """Handler function for the calibrate_confidence tool."""
-    try:
-        result = _confidence_calibrator.calibrate_confidence(**kwargs)
-        return _safe_json_dumps(result, indent=2)
-    except Exception as e:
-        return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+    return create_generic_handler('calibrate_confidence')(**kwargs)
 
 
 def export_chain_handler(**kwargs) -> str:
@@ -1404,6 +1796,36 @@ def import_chain_handler(**kwargs) -> str:
         return _safe_json_dumps(result, indent=2)
     except Exception as e:
         return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
+
+
+# =============================================================================
+# HANDLER CREATION FUNCTIONS (for testing and factory patterns)
+# =============================================================================
+
+def create_chain_of_thought_step_handler(registry=None, rate_limiter=None, client_id="default"):
+    return create_generic_handler('chain_of_thought_step', registry, rate_limiter, client_id)
+
+
+def create_get_chain_summary_handler(registry=None, rate_limiter=None, client_id="default"):
+    return create_generic_handler('get_chain_summary', registry, rate_limiter, client_id)
+
+
+def create_clear_chain_handler(registry=None, rate_limiter=None, client_id="default"):
+    return create_generic_handler('clear_chain', registry, rate_limiter, client_id)
+
+
+def create_generate_hypotheses_handler(registry=None, rate_limiter=None, client_id="default"):
+    return create_generic_handler('generate_hypotheses', registry, rate_limiter, client_id)
+
+
+def create_map_assumptions_handler(registry=None, rate_limiter=None, client_id="default"):
+    return create_generic_handler('map_assumptions', registry, rate_limiter, client_id)
+
+
+def create_calibrate_confidence_handler(registry=None, rate_limiter=None, client_id="default"):
+    return create_generic_handler('calibrate_confidence', registry, rate_limiter, client_id)
+
+
 
 
 class StopReasonHandler(ABC):
@@ -1431,8 +1853,8 @@ class BedrockStopReasonHandler(StopReasonHandler):
                 "chain_of_thought_step": self._create_chain_step_handler(),
                 "get_chain_summary": self._create_summary_handler(),
                 "clear_chain": self._create_clear_handler(),
-                "export_chain": self._create_export_handler(),
-                "import_chain": self._create_import_handler()
+                "export_chain": self._create_handler_factory("export_chain", takes_kwargs=True),
+                "import_chain": self._create_handler_factory("import_chain", takes_kwargs=True)
             }
         else:
             # Use global handlers
@@ -1444,66 +1866,41 @@ class BedrockStopReasonHandler(StopReasonHandler):
                 "import_chain": import_chain_handler
             }
     
-    def _create_chain_step_handler(self):
-        """Create a chain step handler bound to this instance's chain."""
-        chain = self.chain
-        assert chain is not None
+    def _create_handler_factory(self, method_name: str, takes_kwargs: bool = False):
+        """
+        Create a generic handler factory for any method on this instance's chain.
+
+        Args:
+            method_name: Name of the method to call on self.chain
+            takes_kwargs: Whether the method accepts keyword arguments
+
+        Returns:
+            A handler function bound to this instance's chain
+        """
         def handler(**kwargs):
             try:
-                result = chain.add_step(**kwargs)
+                method = getattr(self.chain, method_name)
+                if takes_kwargs:
+                    result = method(**kwargs)
+                else:
+                    result = method()
                 return _safe_json_dumps(result, indent=2)
             except Exception as e:
                 return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
         return handler
+
+    def _create_chain_step_handler(self):
+        """Create a chain step handler bound to this instance's chain."""
+        return self._create_handler_factory("add_step", takes_kwargs=True)
 
     def _create_summary_handler(self):
         """Create a summary handler bound to this instance's chain."""
-        chain = self.chain
-        assert chain is not None
-        def handler():
-            try:
-                result = chain.generate_summary()
-                return _safe_json_dumps(result, indent=2)
-            except Exception as e:
-                return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
-        return handler
+        return self._create_handler_factory("generate_summary", takes_kwargs=False)
 
     def _create_clear_handler(self):
         """Create a clear handler bound to this instance's chain."""
-        chain = self.chain
-        assert chain is not None
-        def handler():
-            try:
-                result = chain.clear_chain()
-                return _safe_json_dumps(result, indent=2)
-            except Exception as e:
-                return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
-        return handler
-
-    def _create_export_handler(self):
-        """Create an export handler bound to this instance's chain."""
-        chain = self.chain
-        assert chain is not None
-        def handler(**kwargs):
-            try:
-                result = chain.export_chain(**kwargs)
-                return _safe_json_dumps(result, indent=2)
-            except Exception as e:
-                return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
-        return handler
-
-    def _create_import_handler(self):
-        """Create an import handler bound to this instance's chain."""
-        chain = self.chain
-        assert chain is not None
-        def handler(**kwargs):
-            try:
-                result = chain.import_chain(**kwargs)
-                return _safe_json_dumps(result, indent=2)
-            except Exception as e:
-                return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
-        return handler
-
+        return self._create_handler_factory("clear_chain", takes_kwargs=False)
+    
     async def should_continue_reasoning(self, chain: ChainOfThought) -> bool:
         """Check if CoT indicates more steps needed."""
         if not chain.steps:
@@ -1538,28 +1935,101 @@ class BedrockStopReasonHandler(StopReasonHandler):
 class AsyncChainOfThoughtProcessor:
     """Async wrapper for CoT that integrates with Bedrock tool loops."""
     
-    def __init__(self, conversation_id: str, stop_handler: Optional[StopReasonHandler] = None):
+    def __init__(self, conversation_id: str, stop_handler: Optional[StopReasonHandler] = None,
+                 request_validator: Optional[RequestValidator] = None,
+                 aws_call_timeout: float = 30.0, tool_call_timeout: float = 10.0):
+        """
+        Initialize AsyncChainOfThoughtProcessor with configurable timeouts.
+
+        Args:
+            conversation_id: Unique identifier for the conversation
+            stop_handler: Handler for stopReason logic
+            request_validator: Security request validator
+            aws_call_timeout: Timeout in seconds for AWS API calls
+            tool_call_timeout: Timeout in seconds for tool handler calls
+        """
         self.conversation_id = conversation_id
         self.chain = ChainOfThought()
         # Pass the chain instance to the handler so it uses this specific chain
         self.stop_handler = stop_handler or BedrockStopReasonHandler(chain=self.chain)
+        self.request_validator = request_validator or default_validator
         self._tool_use_count = 0
         self._max_iterations = 20
-    
-    async def process_tool_loop(self, 
+
+        # Timeout configuration
+        self.aws_call_timeout = aws_call_timeout
+        self.tool_call_timeout = tool_call_timeout
+
+    async def _safe_aws_call(self, bedrock_client, **kwargs) -> Dict[str, Any]:
+        """
+        Execute AWS Bedrock call with proper timeout handling.
+
+        Args:
+            bedrock_client: AWS Bedrock client
+            **kwargs: Parameters for converse call
+
+        Returns:
+            AWS response
+
+        Raises:
+            TimeoutError: If AWS call exceeds timeout
+        """
+        try:
+            loop = asyncio.get_event_loop()
+            return await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: bedrock_client.converse(**kwargs)
+                ),
+                timeout=self.aws_call_timeout
+            )
+        except asyncio.TimeoutError:
+            raise TimeoutError(f"AWS Bedrock call timed out after {self.aws_call_timeout} seconds")
+
+    async def _safe_tool_call(self, handler_func: Callable, **kwargs) -> str:
+        """
+        Execute tool handler call with proper timeout handling.
+
+        Args:
+            handler_func: Tool handler function
+            **kwargs: Parameters for handler
+
+        Returns:
+            Handler response JSON string
+
+        Raises:
+            TimeoutError: If tool call exceeds timeout
+        """
+        try:
+            # Run tool handler in thread pool with timeout
+            result = await asyncio.wait_for(
+                asyncio.to_thread(handler_func, **kwargs),
+                timeout=self.tool_call_timeout
+            )
+            return result
+        except asyncio.TimeoutError:
+            raise TimeoutError(f"Tool call timed out after {self.tool_call_timeout} seconds")
+
+    async def process_tool_loop(self,
                               bedrock_client,
                               initial_request: Dict[str, Any],
                               max_iterations: Optional[int] = None) -> Dict[str, Any]:
         """Process Bedrock tool loop with CoT integration."""
-        
+
+        # Validate and sanitize the initial request to prevent injection attacks
+        try:
+            sanitized_request = self.request_validator.validate_and_sanitize_request(initial_request)
+        except SecurityValidationError as e:
+            raise SecurityValidationError(f"Security validation failed: {str(e)}")
+
         max_iter = max_iterations or self._max_iterations
-        messages = initial_request.get("messages", []).copy()
-        
-        for _ in range(max_iter):
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None, 
-                lambda: bedrock_client.converse(**{**initial_request, "messages": messages})
+        messages = sanitized_request.get("messages", []).copy()
+
+        for iteration in range(max_iter):
+            # Use safe AWS call with timeout protection
+            response = await self._safe_aws_call(
+                bedrock_client,
+                **{**sanitized_request, "messages": messages}
             )
             
             stop_reason = response.get("stopReason")
@@ -1584,11 +2054,23 @@ class AsyncChainOfThoughtProcessor:
                         tool_use_id = tool_use["toolUseId"]
                         
                         try:
-                            result = await self.stop_handler.execute_tool_call(tool_name, tool_input)
+                            # Use safe tool call with timeout protection
+                            result = await asyncio.wait_for(
+                                self.stop_handler.execute_tool_call(tool_name, tool_input),
+                                timeout=self.tool_call_timeout
+                            )
                             tool_results.append({
                                 "toolResult": {
                                     "toolUseId": tool_use_id,
                                     "content": [{"text": _safe_json_dumps(result)}]
+                                }
+                            })
+                        except asyncio.TimeoutError:
+                            tool_results.append({
+                                "toolResult": {
+                                    "toolUseId": tool_use_id,
+                                    "content": [{"text": _safe_json_dumps({"error": f"Tool call timed out after {self.tool_call_timeout} seconds"})}],
+                                    "status": "error"
                                 }
                             })
                         except Exception as e:
@@ -1622,6 +2104,41 @@ class AsyncChainOfThoughtProcessor:
                 }
             }
         }
+
+    async def process_tool_loop_with_timeout(self,
+                                           bedrock_client,
+                                           initial_request: Dict[str, Any],
+                                           max_iterations: Optional[int] = None,
+                                           overall_timeout: Optional[float] = None) -> Dict[str, Any]:
+        """
+        Process Bedrock tool loop with overall timeout protection.
+
+        Args:
+            bedrock_client: AWS Bedrock client
+            initial_request: Initial Bedrock request
+            max_iterations: Maximum number of tool loop iterations
+            overall_timeout: Overall timeout for the entire process
+
+        Returns:
+            Bedrock response or timeout error response
+        """
+        timeout = overall_timeout or (self.aws_call_timeout * 2)  # Default to 2x AWS timeout
+
+        try:
+            return await asyncio.wait_for(
+                self.process_tool_loop(bedrock_client, initial_request, max_iterations),
+                timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            return {
+                "stopReason": "timeout",
+                "output": {
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"text": f"Request timeout after {timeout} seconds"}]
+                    }
+                }
+            }
     
     async def get_reasoning_summary(self) -> Dict[str, Any]:
         """Get summary of the reasoning process."""
@@ -1634,45 +2151,128 @@ class AsyncChainOfThoughtProcessor:
 
 
 class ThreadAwareChainOfThought:
-    """Thread-safe version for production use."""
-    
-    _instances: Dict[str, ChainOfThought] = {}
+    """Thread-safe version for production use with dependency injection support."""
+
+    # Hybrid approach: WeakValueDictionary for automatic cleanup + strong refs for active conversations
+    _instances: 'weakref.WeakValueDictionary[str, ChainOfThought]' = weakref.WeakValueDictionary()
+    _strong_refs: Dict[str, ChainOfThought] = {}  # Keep strong refs to prevent premature GC
     _lock = threading.RLock()
-    
+
     @classmethod
-    def for_conversation(cls, conversation_id: str) -> ChainOfThought:
+    def for_conversation(cls, conversation_id: str, registry: Optional[ServiceRegistry] = None) -> ChainOfThought:
         """Get or create a ChainOfThought instance for a conversation."""
         with cls._lock:
-            if conversation_id not in cls._instances:
-                cls._instances[conversation_id] = ChainOfThought()
-            return cls._instances[conversation_id]
-    
-    def __init__(self, conversation_id: str):
+            # Try to get existing instance from strong references first
+            if conversation_id in cls._strong_refs:
+                return cls._strong_refs[conversation_id]
+
+            # Try to get from weak references (may be None if GC'd)
+            try:
+                weak_instance = cls._instances[conversation_id]
+                if weak_instance is not None:
+                    # Found in weak refs, promote to strong refs
+                    cls._strong_refs[conversation_id] = weak_instance
+                    return weak_instance
+            except KeyError:
+                pass  # Instance doesn't exist, create new one
+
+            # Create new instance
+            service_registry = registry or get_service_registry()
+            new_instance = ChainOfThought()
+
+            # Store in both weak and strong references
+            cls._instances[conversation_id] = new_instance
+            cls._strong_refs[conversation_id] = new_instance
+            return new_instance
+
+    @classmethod
+    def clear_conversation(cls, conversation_id: str) -> bool:
+        """Explicitly clear a conversation from the cache.
+
+        Args:
+            conversation_id: The conversation ID to clear
+
+        Returns:
+            True if conversation was removed, False if not found
+        """
+        with cls._lock:
+            removed_from_weak = cls._instances.pop(conversation_id, None) is not None
+            removed_from_strong = cls._strong_refs.pop(conversation_id, None) is not None
+            return removed_from_weak or removed_from_strong
+
+    @classmethod
+    def clear_all_conversations(cls) -> int:
+        """Clear all conversations and return count cleared.
+
+        Returns:
+            Number of conversations that were cleared
+        """
+        with cls._lock:
+            count = max(len(cls._instances), len(cls._strong_refs))
+            cls._instances.clear()
+            cls._strong_refs.clear()
+            return count
+
+    @classmethod
+    def get_cached_conversation_count(cls) -> int:
+        """Get the current number of cached conversations.
+
+        Returns:
+            Number of conversations currently cached
+        """
+        with cls._lock:
+            return max(len(cls._instances), len(cls._strong_refs))
+
+    @classmethod
+    def release_conversation(cls, conversation_id: str) -> bool:
+        """Release strong reference for a conversation, allowing weak reference cleanup.
+
+        This is the key method for memory management - call this when conversation
+        is no longer actively needed but should remain available for weak reference GC.
+
+        Args:
+            conversation_id: The conversation ID to release
+
+        Returns:
+            True if conversation was released, False if not found
+        """
+        with cls._lock:
+            return cls._strong_refs.pop(conversation_id, None) is not None
+
+    def __init__(self, conversation_id: str, registry: Optional[ServiceRegistry] = None):
         self.conversation_id = conversation_id
-        self.chain = self.for_conversation(conversation_id)
-    
+        self.registry = registry or get_service_registry()
+        self.chain = self.for_conversation(conversation_id, self.registry)
+
     def get_tool_specs(self):
         """Get tool specs for this instance."""
         from . import TOOL_SPECS
         return TOOL_SPECS
-    
+
     def get_handlers(self):
-        """Get handlers bound to this instance."""
+        """Get handlers bound to this instance using dependency injection."""
+        # Create a service registry with this instance's ChainOfThought
+        instance_registry = ServiceRegistry()
+
+        # Copy all factories from the main registry
+        for service_name in ['hypothesis_generator', 'assumption_mapper', 'confidence_calibrator']:
+            if self.registry.has_service(service_name):
+                instance_registry.register_factory(service_name, lambda name=service_name: self.registry.get_service(name))
+
+        # Register this instance's ChainOfThought
+        instance_registry.register_service('chain_of_thought', self.chain)
+
         chain = self.chain
-        return {
-            "chain_of_thought_step": lambda **kwargs: _safe_json_dumps(
-                chain.add_step(**kwargs), indent=2
-            ),
-            "get_chain_summary": lambda: _safe_json_dumps(
-                chain.generate_summary(), indent=2
-            ),
-            "clear_chain": lambda: _safe_json_dumps(
-                chain.clear_chain(), indent=2
-            ),
-            "export_chain": lambda **kwargs: _safe_json_dumps(
-                chain.export_chain(**kwargs), indent=2
-            ),
-            "import_chain": lambda **kwargs: _safe_json_dumps(
-                chain.import_chain(**kwargs), indent=2
-            )
+
+        # Create handlers using the instance registry
+        handlers = {
+            "chain_of_thought_step": create_chain_of_thought_step_handler(instance_registry),
+            "get_chain_summary": create_get_chain_summary_handler(instance_registry),
+            "clear_chain": create_clear_chain_handler(instance_registry),
+            "generate_hypotheses": create_generate_hypotheses_handler(instance_registry),
+            "map_assumptions": create_map_assumptions_handler(instance_registry),
+            "calibrate_confidence": create_calibrate_confidence_handler(instance_registry),
+            "export_chain": lambda **kwargs: _safe_json_dumps(chain.export_chain(**kwargs), indent=2),
+            "import_chain": lambda **kwargs: _safe_json_dumps(chain.import_chain(**kwargs), indent=2)
         }
+        return handlers

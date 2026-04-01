@@ -1,4 +1,4 @@
-[pytest]
+[tool:pytest]
 minversion = 6.0
 addopts = -ra -q --strict-markers --strict-config
 testpaths = tests
@@ -14,7 +14,7 @@ markers =
     mock: Tests using mocks for external dependencies
     edge_case: Tests for boundary conditions and error handling
     slow: Tests that take significant time to run
-    security: Security-focused tests for vulnerability prevention
+    security: Security tests for vulnerability prevention
     service_registry: Service registry error handling tests
     memory_leak: Memory leak vulnerability tests
     async_timeout: Async timeout vulnerability tests

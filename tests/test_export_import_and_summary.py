@@ -341,9 +341,9 @@ class TestImportChain:
         assert "last_updated" not in self.cot.metadata
 
     def test_generate_summary_no_zerodivision_when_total_steps_zero(self):
-        """Adding a step with total_steps=0 must not raise ZeroDivisionError."""
-        result = self.cot.add_step("thought", 0, 0, False)
-        assert result["status"] == "success"
+        """Validator rejects step_number=0 (must be 1-1000), preventing ZeroDivisionError."""
+        with pytest.raises(ValueError, match="step_number"):
+            self.cot.add_step("thought", 0, 0, False)
 
 
 # ---------------------------------------------------------------------------

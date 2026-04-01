@@ -6,7 +6,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 setup(
     name="chain-of-thought-tool",
     version="0.2.0",
-    author="Code Developer", 
+    author="Code Developer",
     author_email="code-developer@democratize.technology",
     description="A lightweight Chain of Thought reasoning tool for LLM function calling",
     long_description=long_description,
@@ -19,13 +19,13 @@ setup(
         "Operating System :: OS Independent",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9", 
+        "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Topic :: Software Development :: Libraries :: Python Modules",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
     ],
-    python_requires=">=3.8",
+    python_requires=">=3.8.1",
     install_requires=[
     ],
     extras_require={

@@ -134,6 +134,42 @@ Reset the thinking process:
 
 ## Advanced Features
 
+### Parameter Validation
+
+The package includes dedicated parameter validators that ensure secure and robust input handling:
+
+```python
+from chain_of_thought import ParameterValidator
+
+validator = ParameterValidator()
+
+# Validate individual parameters
+safe_thought = validator.validate_thought_param(user_input)
+safe_confidence = validator.validate_confidence_param(0.85)
+
+# Or validate all parameters at once
+validated = validator.validate_input(
+    thought="My thinking process",
+    step_number=1,
+    total_steps=5,
+    next_step_needed=True,
+    reasoning_stage="Analysis",
+    confidence=0.8
+)
+```
+
+**Security Features:**
+- **XSS Prevention**: HTML escaping for all string inputs
+- **Input Length Limits**: Prevents DoS attacks with size restrictions
+- **Type Validation**: Ensures correct data types for all parameters
+- **Range Validation**: Numeric inputs are bounded within reasonable limits
+
+**Architecture Benefits:**
+- **Separation of Concerns**: Validation logic is isolated from business logic
+- **Reusability**: Validators can be used across different classes
+- **Testability**: Validation rules can be unit tested independently
+- **Maintainability**: Changes to validation rules are centralized
+
 ### Confidence Tracking
 Each step can include a confidence level (0.0-1.0) to indicate certainty:
 

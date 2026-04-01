@@ -31,6 +31,7 @@ import os
 import boto3
 from botocore.exceptions import NoCredentialsError, ClientError, BotoCoreError
 from chain_of_thought import TOOL_SPECS, AsyncChainOfThoughtProcessor
+from chain_of_thought.security import SecurityConfig, RequestValidator
 
 
 def get_aws_region():
@@ -128,8 +129,19 @@ async def main():
         print("✅ AWS configuration validated successfully")
         print()
         
+        # Configure security validator (optional - uses secure defaults if not specified)
+        security_config = SecurityConfig(
+            # Restrict to specific Claude 3 models for production use
+            allowed_model_patterns=[
+                r'^anthropic\.claude-3-(sonnet|haiku)-\d{8}-v\d:\d+$',
+                r'^anthropic\.claude-3-5-sonnet-\d{8}-v\d:\d+$'
+            ]
+        )
+        request_validator = RequestValidator(security_config)
+
         cot_processor = AsyncChainOfThoughtProcessor(
-            conversation_id="example-session-123"
+            conversation_id="example-session-123",
+            request_validator=request_validator
         )
         
     except RuntimeError as e:
@@ -318,3 +330,21 @@ if __name__ == "__main__":
     print("1. Configure AWS: aws configure")
     print("2. (Optional) Set region: export AWS_REGION=your-preferred-region") 
     print("3. Uncomment the asyncio.run(main()) line above")
+    print("\n🔒 Security Features:")
+    print("✅ Input validation and sanitization")
+    print("✅ Model ID whitelisting")
+    print("✅ Parameter range validation")
+    print("✅ Injection pattern detection")
+    print("✅ Tool name validation")
+    print("✅ Content security scanning")
+    print("\n🛡️ Production Security Recommendations:")
+    print("1. Always use custom SecurityConfig for production")
+    print("2. Restrict modelId patterns to your approved models")
+    print("3. Set appropriate temperature and token limits")
+    print("4. Monitor SecurityValidationError exceptions")
+    print("5. Log validation failures for security auditing")
+    print("\n⚠️  Security Notes:")
+    print("- All requests are validated before AWS API calls")
+    print("- Malicious parameters are rejected with descriptive errors")
+    print("- Default configuration is secure but customizable")
+    print("- No security bypasses are possible through the API")

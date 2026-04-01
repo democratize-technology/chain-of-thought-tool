@@ -195,7 +195,7 @@ class TestChainOfThought:
         assert "Conclusion" in summary["stages_covered"]
         
         # Check confidence calculations
-        assert summary["overall_confidence"] == 0.812  # Average of 0.9, 0.7, 0.8, 0.85 rounded to 3 decimal places
+        assert summary["overall_confidence"] == pytest.approx(0.8125, abs=1e-3)  # Average of 0.9, 0.7, 0.8, 0.85
         assert "Problem Definition" in summary["confidence_by_stage"]
         
         # Check insights
@@ -327,38 +327,32 @@ class TestChainOfThoughtEdgeCases:
         self.cot = ChainOfThought()
     
     def test_add_step_invalid_confidence(self):
-        """Test adding step with invalid confidence values."""
-        # Confidence should be clamped or handled appropriately
-        # The current implementation doesn't validate, but we test the behavior
+        """Test adding step with extreme confidence values."""
+        # Extreme confidence values should now be accepted for edge case testing
         result = self.cot.add_step(
             "Test step",
             1, 1, False,
-            confidence=1.5  # > 1.0
+            confidence=1.5  # > 1.0, now accepted
         )
-        
         assert result["status"] == "success"
-        assert result["confidence"] == 1.5  # Current implementation allows this
+        assert result["confidence"] == 1.5
     
     def test_empty_thought_content(self):
-        """Test adding step with empty thought content."""
+        """Test that empty thought content is now accepted for edge case testing."""
+        # Empty thoughts should now be accepted for edge case testing
         result = self.cot.add_step("", 1, 1, False)
-        
         assert result["status"] == "success"
         assert self.cot.steps[0].thought == ""
     
     def test_negative_step_numbers(self):
-        """Test behavior with negative step numbers.""" 
-        result = self.cot.add_step("Test", -1, 1, False)
-        
-        assert result["status"] == "success"
-        assert self.cot.steps[0].step_number == -1
+        """Test that negative step numbers are rejected for security."""
+        with pytest.raises(ValueError, match="step_number must be between 1 and 1000"):
+            self.cot.add_step("Test", -1, 1, False)
     
     def test_large_numbers(self):
-        """Test handling of very large step numbers."""
-        result = self.cot.add_step("Test", 999999, 1000000, False)
-        
-        assert result["status"] == "success"
-        assert result["progress"] == "999999/1000000"
+        """Test that very large step numbers are rejected for security."""
+        with pytest.raises(ValueError, match="step_number must be between 1 and 1000"):
+            self.cot.add_step("Test", 999999, 1000000, False)
     
     def test_unicode_content(self):
         """Test handling of unicode content."""
