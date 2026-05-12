@@ -173,33 +173,41 @@ class TestAWSModelInjectionVulnerability:
 class TestInputSanitizationRequirements:
     """Tests that define requirements for input sanitization."""
 
-    def test_allowed_model_ids_pattern(self):
-        """Define what model IDs should be allowed."""
-        import re
+    def test_allowed_model_ids_accepted(self):
+        """Model ID validation should accept any non-empty string.
 
-        # Pattern for valid Anthropic Claude model IDs
-        valid_model_pattern = r'^anthropic\.claude-3-(sonnet|haiku|opus)-\d{8}-v\d:\d+$'
+        Model identity is the caller's decision. The library does not
+        pre-validate which Bedrock model IDs are valid — that's AWS's job.
+        """
+        from chain_of_thought.security import SecurityConfig, RequestValidator
 
-        # Valid model IDs should match
-        valid_models = [
+        validator = RequestValidator(SecurityConfig())
+
+        # All non-empty strings should be accepted
+        must_accept = [
             "anthropic.claude-3-sonnet-20240229-v1:0",
             "anthropic.claude-3-haiku-20240307-v1:0",
-            "anthropic.claude-3-opus-20240229-v1:0"
+            "anthropic.claude-3-opus-20240229-v1:0",
+            "us.anthropic.claude-opus-4-7",
+            "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "us.deepseek.r1-v1:0",
+            "us.meta.llama3-3-70b-instruct-v1:0",
+            "amazon.titan-text-premier-v1:0",
+            "cohere.command-r-plus-v1:0",
         ]
 
-        for model in valid_models:
-            assert re.match(valid_model_pattern, model), f"Valid model {model} should match pattern"
+        for model_id in must_accept:
+            assert validator._validate_model_id(model_id) == model_id, (
+                f"Library wrongly rejected {model_id}"
+            )
 
-        # Invalid model IDs should not match
-        invalid_models = [
-            "some.restricted.model-v1:0",
-            "anthropic.claude-2-legacy",
-            "malicious-injection",
-            "../../../etc/passwd"
-        ]
-
-        for model in invalid_models:
-            assert not re.match(valid_model_pattern, model), f"Invalid model {model} should not match pattern"
+        # Empty and non-string should still be rejected
+        with pytest.raises(SecurityValidationError):
+            validator._validate_model_id("")
+        with pytest.raises(SecurityValidationError):
+            validator._validate_model_id("   ")
+        with pytest.raises(SecurityValidationError):
+            validator._validate_model_id(123)
 
     def test_inference_config_validation_ranges(self):
         """Define valid ranges for inference parameters."""
@@ -299,24 +307,24 @@ class TestSecurityFix:
         mock_client.converse.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_invalid_model_id_prevented(self):
-        """Test that invalid model IDs are rejected."""
+    async def test_empty_model_id_prevented(self):
+        """Test that empty model IDs are rejected."""
         processor = AsyncChainOfThoughtProcessor("test-security")
 
         mock_client = Mock()
         mock_client.converse.return_value = {"stopReason": "end_turn"}
 
-        # Request with invalid model ID
+        # Request with empty model ID
         malicious_request = {
             "messages": [{"role": "user", "content": [{"text": "Normal request"}]}],
-            "modelId": "some.malicious.model-v1:0",
+            "modelId": "",
         }
 
         # Should raise SecurityValidationError
         with pytest.raises(SecurityValidationError) as exc_info:
             await processor.process_tool_loop(mock_client, malicious_request)
 
-        assert "does not match any allowed pattern" in str(exc_info.value)
+        assert "must be a non-empty string" in str(exc_info.value)
         mock_client.converse.assert_not_called()
 
     @pytest.mark.asyncio
@@ -481,3 +489,90 @@ class TestSecurityFix:
 
         # Verify result
         assert result["stopReason"] == "end_turn"
+
+
+class TestModelIdAcceptance:
+    """Regression tests for bug #06: hardcoded model allowlist rejection.
+
+    The library must not reject current-generation Bedrock model IDs.
+    Model identity is the caller's decision, not the library's.
+    """
+
+    def test_current_gen_bedrock_models_accepted(self):
+        """The library must accept all current Bedrock model IDs."""
+        from chain_of_thought.security import SecurityConfig, RequestValidator
+
+        validator = RequestValidator(SecurityConfig())
+
+        must_accept = [
+            # Cross-region inference profiles
+            "us.anthropic.claude-opus-4-7",
+            "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "us.anthropic.claude-haiku-4-5-20251001",
+            # Cross-vendor models
+            "us.deepseek.r1-v1:0",
+            "us.meta.llama3-3-70b-instruct-v1:0",
+            "amazon.titan-text-premier-v1:0",
+            "cohere.command-r-plus-v1:0",
+            # Legacy Claude models
+            "anthropic.claude-3-5-haiku-20241022-v1:0",
+            "anthropic.claude-3-sonnet-20240229-v1:0",
+            # ARN-format model IDs
+            "arn:aws:bedrock:us-east-1:123456789012:provisioned-model/abc123",
+        ]
+
+        for model_id in must_accept:
+            result = validator._validate_model_id(model_id)
+            assert result == model_id, (
+                f"Library wrongly rejected {model_id}; the security boundary "
+                f"of a reasoning library is not model identity"
+            )
+
+    def test_model_id_type_validation_still_works(self):
+        """Non-string and empty model IDs must still be rejected."""
+        from chain_of_thought.security import SecurityConfig, RequestValidator
+
+        validator = RequestValidator(SecurityConfig())
+
+        with pytest.raises(SecurityValidationError, match="must be a string"):
+            validator._validate_model_id(123)
+
+        with pytest.raises(SecurityValidationError, match="must be a non-empty"):
+            validator._validate_model_id("")
+
+        with pytest.raises(SecurityValidationError, match="must be a non-empty"):
+            validator._validate_model_id("   ")
+
+    @pytest.mark.asyncio
+    async def test_cross_region_model_in_tool_loop(self):
+        """Verify cross-region model IDs work end-to-end in the tool loop."""
+        mock_client = Mock()
+        mock_client.converse.return_value = {"stopReason": "end_turn"}
+
+        processor = AsyncChainOfThoughtProcessor("test-cross-region")
+
+        request = {
+            "messages": [{"role": "user", "content": [{"text": "Analyze this."}]}],
+            "modelId": "us.anthropic.claude-opus-4-7",
+        }
+
+        result = await processor.process_tool_loop(mock_client, request)
+        assert result["stopReason"] == "end_turn"
+        mock_client.converse.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_deepseek_model_in_tool_loop(self):
+        """Verify non-Anthropic models work end-to-end in the tool loop."""
+        mock_client = Mock()
+        mock_client.converse.return_value = {"stopReason": "end_turn"}
+
+        processor = AsyncChainOfThoughtProcessor("test-deepseek")
+
+        request = {
+            "messages": [{"role": "user", "content": [{"text": "Analyze this."}]}],
+            "modelId": "us.deepseek.r1-v1:0",
+        }
+
+        result = await processor.process_tool_loop(mock_client, request)
+        assert result["stopReason"] == "end_turn"
+        mock_client.converse.assert_called_once()

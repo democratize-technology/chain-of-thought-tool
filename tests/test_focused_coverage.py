@@ -335,7 +335,6 @@ class TestBasicFunctionalityCoverage:
         from chain_of_thought.security import SecurityConfig
 
         config = SecurityConfig()
-        assert config.allowed_model_patterns is not None
         assert config.allowed_top_level_params is not None
         assert config.allowed_inference_params is not None
         assert config.min_temperature == 0.0

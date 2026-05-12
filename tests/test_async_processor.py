@@ -92,7 +92,6 @@ class TestAsyncChainOfThoughtProcessor:
 
         # Create permissive security config for testing
         test_security_config = SecurityConfig(
-            allowed_model_patterns=[r'^test-model$', r'^.*$'],  # Allow test models
             allowed_top_level_params={
                 'messages', 'modelId', 'system', 'toolConfig', 'inferenceConfig',
                 'guardrailConfig', 'additionalModelRequestFields', 'temperature',
@@ -273,7 +272,6 @@ class TestAsyncChainOfThoughtProcessor:
 
         # Create permissive security config for testing
         test_security_config = SecurityConfig(
-            allowed_model_patterns=[r'^test-model$', r'^.*$'],  # Allow test models
             allowed_top_level_params={
                 'messages', 'modelId', 'system', 'toolConfig', 'inferenceConfig',
                 'guardrailConfig', 'additionalModelRequestFields', 'temperature',

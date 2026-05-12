@@ -12,9 +12,6 @@ from dataclasses import dataclass
 class SecurityConfig:
     """Security configuration for parameter validation."""
 
-    # Allowed model ID patterns (whitelist approach)
-    allowed_model_patterns: List[str] = None
-
     # Parameter whitelists
     allowed_top_level_params: Set[str] = None
     allowed_inference_params: Set[str] = None
@@ -29,13 +26,6 @@ class SecurityConfig:
 
     def __post_init__(self):
         """Initialize default values if not provided."""
-        if self.allowed_model_patterns is None:
-            # Default to Anthropic Claude 3 models
-            self.allowed_model_patterns = [
-                r'^anthropic\.claude-3-(sonnet|haiku|opus)-\d{8}-v\d:\d+$',
-                r'^anthropic\.claude-3-5-sonnet-\d{8}-v\d:\d+$'
-            ]
-
         if self.allowed_top_level_params is None:
             self.allowed_top_level_params = {
                 'messages',           # Required
@@ -125,19 +115,20 @@ class RequestValidator:
             return param_value
 
     def _validate_model_id(self, model_id: str) -> str:
-        """Validate model ID against allowed patterns."""
+        """Validate model ID is a non-empty string.
+
+        Model identity is the caller's decision. AWS Bedrock rejects invalid
+        model IDs at the API layer. This library does not pre-validate model
+        identity — that authorization boundary belongs in AWS IAM, the caller's
+        billing setup, or the caller's own policy code.
+        """
         if not isinstance(model_id, str):
             raise SecurityValidationError("modelId must be a string")
 
-        # Check against allowed patterns
-        for pattern in self.config.allowed_model_patterns:
-            if re.match(pattern, model_id):
-                return model_id
+        if not model_id.strip():
+            raise SecurityValidationError("modelId must be a non-empty string")
 
-        raise SecurityValidationError(
-            f"modelId '{model_id}' does not match any allowed pattern. "
-            f"Allowed patterns: {self.config.allowed_model_patterns}"
-        )
+        return model_id
 
     def _validate_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Validate messages array."""

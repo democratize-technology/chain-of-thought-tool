@@ -129,14 +129,8 @@ async def main():
         print("✅ AWS configuration validated successfully")
         print()
         
-        # Configure security validator (optional - uses secure defaults if not specified)
-        security_config = SecurityConfig(
-            # Restrict to specific Claude 3 models for production use
-            allowed_model_patterns=[
-                r'^anthropic\.claude-3-(sonnet|haiku)-\d{8}-v\d:\d+$',
-                r'^anthropic\.claude-3-5-sonnet-\d{8}-v\d:\d+$'
-            ]
-        )
+        # Configure security validator (uses secure defaults)
+        security_config = SecurityConfig()
         request_validator = RequestValidator(security_config)
 
         cot_processor = AsyncChainOfThoughtProcessor(

@@ -458,9 +458,7 @@ class TestCustomSecurityConfig:
 
     def test_custom_config_validation(self):
         """Test validation with custom security configuration."""
-        # Custom config with restricted patterns
         custom_config = SecurityConfig(
-            allowed_model_patterns=[r'^custom\.model-v\d+$'],
             min_temperature=0.1,
             max_temperature=0.9,
             min_max_tokens=10,
@@ -469,9 +467,13 @@ class TestCustomSecurityConfig:
 
         validator = RequestValidator(custom_config)
 
-        # Test custom model validation
-        with pytest.raises(SecurityValidationError, match="does not match any allowed pattern"):
-            validator._validate_model_id("anthropic.claude-3-sonnet-20240229-v1:0")
+        # Model IDs are now accepted as any non-empty string (wrong-layer policing removed)
+        assert validator._validate_model_id("anthropic.claude-3-sonnet-20240229-v1:0") == "anthropic.claude-3-sonnet-20240229-v1:0"
+        assert validator._validate_model_id("us.deepseek.r1-v1:0") == "us.deepseek.r1-v1:0"
+
+        # Empty/non-string still rejected
+        with pytest.raises(SecurityValidationError, match="must be a non-empty string"):
+            validator._validate_model_id("")
 
         # Test custom temperature validation
         with pytest.raises(SecurityValidationError, match="temperature 0.05 out of range"):
