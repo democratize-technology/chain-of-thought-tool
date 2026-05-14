@@ -209,7 +209,7 @@ async def main():
         if error_code == 'ValidationException':
             print(f"❌ Model or request validation error: {error_message}")
             print("   Check that the model ID is correct and available in your region")
-            print("   Current model: anthropic.claude-3-sonnet-20240229-v1:0")
+            print(f"   Current model: {request.get('modelId', 'unknown')}")
         elif error_code == 'AccessDeniedException':
             print(f"❌ Access denied: {error_message}")
             print("   Your AWS credentials may lack the required Bedrock permissions")
