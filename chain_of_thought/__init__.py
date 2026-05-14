@@ -137,7 +137,7 @@ TOOL_SPECS = [
     {
         "toolSpec": {
             "name": "generate_hypotheses",
-            "description": "Generate diverse hypotheses to explain an observation. Creates scientific, intuitive, contrarian, and systematic explanations ranked by testability.",
+            "description": "Generate a structured hypothesis framework for an observation. Returns scientific, intuitive, contrarian, and systematic hypothesis templates that scaffold reasoning — the LLM consuming these provides the actual analysis.",
             "inputSchema": {
                 "json": {
                     "type": "object",
@@ -162,7 +162,7 @@ TOOL_SPECS = [
     {
         "toolSpec": {
             "name": "map_assumptions",
-            "description": "Surface and validate hidden assumptions in statements. Identifies explicit and implicit assumptions with criticality assessment and dependency mapping.",
+            "description": "Map assumptions in statements using keyword-based heuristic patterns. Identifies linguistic indicators of assumptions (e.g., 'clearly', 'obviously', 'must') and returns a structured framework for the LLM to reason about.",
             "inputSchema": {
                 "json": {
                     "type": "object",
@@ -186,7 +186,7 @@ TOOL_SPECS = [
     {
         "toolSpec": {
             "name": "calibrate_confidence",
-            "description": "Calibrate confidence levels and provide realistic uncertainty bounds. Detects overconfidence patterns and adjusts predictions with uncertainty bands.",
+            "description": "Calibrate confidence using heuristic pattern matching. Detects absolute language and domain-specific patterns to produce adjusted confidence with uncertainty bands. Provides a calibration framework — the LLM interprets and reasons about the output.",
             "inputSchema": {
                 "json": {
                     "type": "object",
