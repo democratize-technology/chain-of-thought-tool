@@ -1,14 +1,23 @@
+---
+id: ADR-0001
+title: Remove model ID allowlist from security validation
+status: accepted
+date: 2026-05-12
+decision_makers:
+  - Engineering
+category:
+  - architecture
+supersedes: null
+superseded_by: null
+related: []
+tags: [security, validation, bedrock]
+---
+
 # ADR-0001: Remove model ID allowlist from security validation
 
-## Status
-
-Accepted
-
-## Date
-
-2026-05-12
-
 ## Context
+
+### The Problem
 
 The `RequestValidator` in `security.py` maintained a hardcoded allowlist of Bedrock model ID patterns that only matched Anthropic Claude 3 and Claude 3.5 Sonnet models. This allowlist rejected:
 
@@ -18,23 +27,117 @@ The `RequestValidator` in `security.py` maintained a hardcoded allowlist of Bedr
 
 The error message ("Security validation failed") implied a security boundary was crossed when the caller simply chose a model not in the static list.
 
+---
+
 ## Decision
 
 Remove the model ID allowlist entirely. `_validate_model_id` now accepts any non-empty string and trusts the caller. AWS Bedrock rejects invalid model IDs at the API layer with accurate error messages.
 
-## Rationale
+### Requirements
 
-1. **Wrong-layer policing.** A chain-of-thought reasoning library cannot know what models its caller is authorized to use. Model authorization lives in AWS IAM, billing setup, or the caller's own policy code.
+<!-- adr:requirements -->
+requirements:
+  - id: REQ-0001-1
+    category: architecture
+    description: "_validate_model_id accepts any non-empty string"
+    verification:
+      type: grep_negative
+      pattern: "allowed_model_patterns"
+      paths:
+        - "chain_of_thought/security.py"
+      expect: absent
+  - id: REQ-0001-2
+    category: architecture
+    description: "allowed_model_patterns field removed from SecurityConfig"
+    verification:
+      type: grep_negative
+      pattern: "allowed_model_patterns"
+      paths:
+        - "chain_of_thought/security.py"
+      expect: absent
+<!-- /adr:requirements -->
 
-2. **Static staleness.** Every new Bedrock model release silently broke the library until the allowlist was updated. This is a treadmill that serves no security purpose.
+---
 
-3. **Misleading errors.** "Security validation failed" for a valid model ID misrepresents what happened. No security boundary was crossed.
+## Alternatives Considered
 
-4. **Defeats cross-model diversity.** The library's value is enabling structured reasoning across LLMs. Gating model IDs prevents the cross-model diversity that makes structured reasoning valuable.
+### Alternative 1: Expand the allowlist to cover more models
+
+**Approach:** Add patterns for cross-region profiles, newer Claude models, and other Bedrock providers.
+
+**Pros:**
+- Retains allowlist as a security boundary
+
+**Cons:**
+- Treadmill: every new model release requires a library update
+- Cannot predict future model naming conventions
+- LLM provider landscape changes faster than library release cadence
+
+**Decision:** Rejected. The maintenance burden grows without bound.
+
+### Alternative 2: Configurable allowlist
+
+**Approach:** Let callers provide their own allowed model patterns via `SecurityConfig`.
+
+**Pros:**
+- Caller retains control over model authorization
+- No library updates needed for new models
+
+**Cons:**
+- Pushes configuration burden to every consumer
+- Most consumers don't need model-level authorization at the library layer
+- AWS IAM already provides this control
+
+**Decision:** Rejected. Wrong layer for this configuration.
+
+---
 
 ## Consequences
 
-- Any non-empty string model ID is now accepted through the validator
-- AWS Bedrock remains the authoritative rejection point for invalid model IDs
-- Downstream consumers (devil-advocate-mcp, etc.) no longer need custom SecurityConfig overrides to use modern models
-- The `allowed_model_patterns` field is removed from `SecurityConfig`
+### Positive
+
+1. Any non-empty string model ID is accepted through the validator
+2. AWS Bedrock remains the authoritative rejection point for invalid model IDs
+3. Downstream consumers (devil-advocate-mcp, etc.) no longer need custom SecurityConfig overrides to use modern models
+4. Library no longer breaks silently on every new Bedrock model release
+
+### Negative
+
+1. The library no longer validates model IDs at all — relies entirely on AWS API rejection
+2. Typos in model IDs won't be caught until the AWS API call
+
+### Tradeoffs
+
+<!-- adr:tradeoffs -->
+```yaml
+tradeoffs:
+  - gain: Universal model compatibility without library updates
+    cost: Model ID typos caught at AWS API layer instead of locally
+    acceptable: true
+    rationale: >
+      AWS provides clear, accurate error messages for invalid model IDs.
+      The library's job is reasoning tools, not model authorization.
+```
+<!-- /adr:tradeoffs -->
+
+---
+
+## Approval
+
+<!-- adr:approval -->
+```yaml
+approval:
+  required_approvers:
+    - role: Engineering
+      approved: true
+      date: 2026-05-12
+  review_schedule: annually
+  next_review: null
+```
+<!-- /adr:approval -->
+
+---
+
+## References
+
+- AWS Bedrock Converse API: Model ID validation behavior
