@@ -14,10 +14,6 @@ import math
 import re
 from .validators import ParameterValidator
 
-# =============================================================================
-# CONFIGURATION CONSTANTS - Task #4 Magic Numbers Extraction
-# =============================================================================
-
 # Sanitization and Security Limits
 MAX_RECURSION_DEPTH = 50
 MAX_LIST_SIZE = 100
@@ -28,10 +24,6 @@ MAX_IMPORT_STEPS = 10_000  # DoS prevention: max steps allowed in import_chain
 # Confidence and text constants are now in auxiliary.py
 # Re-exported below after ServiceRegistry definition
 
-
-# =============================================================================
-# HANDLER FACTORY CONFIGURATION - Task #5 Generic Handler Factory
-# =============================================================================
 
 # Configuration for tool handlers that the generic factory can create
 TOOL_HANDLERS_CONFIG = {

@@ -26,7 +26,7 @@ from .core import (
     calibrate_confidence_handler,
     export_chain_handler,
     import_chain_handler,
-        # Generic handler factory (Task #5)
+    # Generic handler factory
     create_generic_handler,
     TOOL_HANDLERS_CONFIG,
     # Service registry

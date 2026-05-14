@@ -20,9 +20,7 @@ Enhanced security features:
 - Memory exhaustion protection
 """
 
-# =============================================================================
-# CONFIGURATION CONSTANTS - Task #4 Magic Numbers Extraction
-# =============================================================================
+# Configuration Constants
 
 # Text Processing Limits
 MAX_THOUGHT_LENGTH = 10000

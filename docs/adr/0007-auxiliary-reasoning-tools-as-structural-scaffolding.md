@@ -1,7 +1,7 @@
 ---
 id: ADR-0007
 title: Auxiliary Reasoning Tools as Structural Scaffolding
-status: proposed
+status: accepted
 date: 2026-05-14
 decision_makers:
   - Engineering
@@ -209,8 +209,8 @@ tradeoffs:
 approval:
   required_approvers:
     - role: Engineering
-      approved: false
-      date: null
+      approved: true
+      date: 2026-05-14
   review_schedule: annually
   next_review: null
 ```
