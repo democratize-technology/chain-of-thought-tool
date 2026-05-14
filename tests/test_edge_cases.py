@@ -13,10 +13,8 @@ Tests cover:
 import pytest
 import json
 import sys
-from unittest.mock import patch
 from chain_of_thought.core import (
     ChainOfThought,
-    ThoughtStep,
     HypothesisGenerator,
     AssumptionMapper,
     ConfidenceCalibrator,
@@ -134,7 +132,7 @@ class TestInputValidationEdgeCases:
         # None thought (should fail in type checking, but test behavior)
         self.cot.clear_chain()
         try:
-            result = self.cot.add_step(None, 1, 1, False)
+            result = self.cot.add_step(None, 1, 1, False)  # type: ignore[arg-type]
             # If it doesn't raise an error, verify behavior
             assert result["status"] == "success"
         except (TypeError, ValueError):
@@ -188,8 +186,11 @@ class TestInputValidationEdgeCases:
             # If it doesn't raise an error, verify it was handled properly
             assert result["status"] == "success"
             # Lists should be within reasonable limits
-            assert len(self.cot.steps[0].evidence) <= 50  # Max items limit
-            assert len(self.cot.steps[0].assumptions) <= 50
+            step = self.cot.steps[0]
+            assert step.evidence is not None
+            assert step.assumptions is not None
+            assert len(step.evidence) <= 50  # Max items limit
+            assert len(step.assumptions) <= 50
         except ValueError as e:
             # Expected behavior for extremely long lists - security validation
             assert "cannot exceed 50 items" in str(e) or "cannot exceed 500 characters" in str(e)
@@ -240,7 +241,9 @@ class TestInputValidationEdgeCases:
                 assert stored_thought == test_text, f"Expected {repr(test_text)}, got {repr(stored_thought)}"
 
             # Evidence and assumptions should also be handled consistently
-            stored_evidence = self.cot.steps[0].evidence[0]
+            evidence = self.cot.steps[0].evidence
+            assert evidence is not None and len(evidence) > 0
+            stored_evidence = evidence[0]
             if f"Evidence: {test_text}" == "Evidence: \n\t\r\\\"'`":
                 # Evidence preserves control chars but escapes dangerous ones
                 expected_evidence = "Evidence: \n\t\r\\&quot;&#x27;`"
@@ -270,6 +273,8 @@ class TestInputValidationEdgeCases:
             assert result["status"] == "success"
             step = self.cot.steps[0]
             # Lists should be within reasonable limits (truncated or rejected)
+            assert step.dependencies is not None
+            assert step.contradicts is not None
             assert len(step.dependencies) <= 50  # Max items limit
             assert len(step.contradicts) <= 50
         except ValueError as e:
@@ -289,6 +294,8 @@ class TestInputValidationEdgeCases:
         )
         assert result["status"] == "success"
         step = self.cot.steps[0]
+        assert step.dependencies is not None
+        assert step.contradicts is not None
         assert len(step.dependencies) <= 24  # Step cannot depend on itself and validation may remove invalid deps
         assert len(step.contradicts) == 20
     
