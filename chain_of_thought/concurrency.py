@@ -310,6 +310,8 @@ class ThreadAwareChainOfThought:
         from .core import (
             ServiceRegistry as _ServiceRegistry,
             _safe_json_dumps,
+        )
+        from .handlers import (
             create_chain_of_thought_step_handler,
             create_get_chain_summary_handler,
             create_clear_chain_handler,

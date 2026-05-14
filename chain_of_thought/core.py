@@ -905,87 +905,9 @@ _default_registry.initialize_default_services()
 
 # Global instance for simple usage - now using the service registry
 _chain_processor = _default_registry.get_service('chain_of_thought')
-_hypothesis_generator = _default_registry.get_service('hypothesis_generator')
-_assumption_mapper = _default_registry.get_service('assumption_mapper')
-_confidence_calibrator = _default_registry.get_service('confidence_calibrator')
 
 # Import security module components
 from .security import RequestValidator, SecurityValidationError, default_validator
-
-
-# =============================================================================
-# CONVENIENCE HANDLER FUNCTIONS
-# =============================================================================
-
-# Simple convenience wrappers using the generic handler factory
-def chain_of_thought_step_handler(**kwargs) -> str:
-    return create_generic_handler('chain_of_thought_step')(**kwargs)
-
-
-def get_chain_summary_handler(**kwargs) -> str:
-    return create_generic_handler('get_chain_summary')(**kwargs)
-
-
-def clear_chain_handler(**kwargs) -> str:
-    return create_generic_handler('clear_chain')(**kwargs)
-
-
-def generate_hypotheses_handler(**kwargs) -> str:
-    return create_generic_handler('generate_hypotheses')(**kwargs)
-
-
-def map_assumptions_handler(**kwargs) -> str:
-    return create_generic_handler('map_assumptions')(**kwargs)
-
-
-def calibrate_confidence_handler(**kwargs) -> str:
-    return create_generic_handler('calibrate_confidence')(**kwargs)
-
-
-def export_chain_handler(**kwargs) -> str:
-    """Handler function for the export_chain tool."""
-    try:
-        result = _chain_processor.export_chain(**kwargs)
-        return _safe_json_dumps(result, indent=2)
-    except Exception as e:
-        return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
-
-
-def import_chain_handler(**kwargs) -> str:
-    """Handler function for the import_chain tool."""
-    try:
-        result = _chain_processor.import_chain(**kwargs)
-        return _safe_json_dumps(result, indent=2)
-    except Exception as e:
-        return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
-
-
-# =============================================================================
-# HANDLER CREATION FUNCTIONS (for testing and factory patterns)
-# =============================================================================
-
-def create_chain_of_thought_step_handler(registry=None, rate_limiter=None, client_id="default"):
-    return create_generic_handler('chain_of_thought_step', registry, rate_limiter, client_id)
-
-
-def create_get_chain_summary_handler(registry=None, rate_limiter=None, client_id="default"):
-    return create_generic_handler('get_chain_summary', registry, rate_limiter, client_id)
-
-
-def create_clear_chain_handler(registry=None, rate_limiter=None, client_id="default"):
-    return create_generic_handler('clear_chain', registry, rate_limiter, client_id)
-
-
-def create_generate_hypotheses_handler(registry=None, rate_limiter=None, client_id="default"):
-    return create_generic_handler('generate_hypotheses', registry, rate_limiter, client_id)
-
-
-def create_map_assumptions_handler(registry=None, rate_limiter=None, client_id="default"):
-    return create_generic_handler('map_assumptions', registry, rate_limiter, client_id)
-
-
-def create_calibrate_confidence_handler(registry=None, rate_limiter=None, client_id="default"):
-    return create_generic_handler('calibrate_confidence', registry, rate_limiter, client_id)
 
 
 # Re-export concurrency classes from concurrency.py for backward compatibility.
@@ -997,6 +919,24 @@ from .concurrency import (  # noqa: E402
     DEFAULT_MAX_REQUESTS_PER_MINUTE,
     DEFAULT_MAX_REQUESTS_PER_HOUR,
     DEFAULT_MAX_BURST_SIZE,
+)
+
+# Re-export handler functions from handlers.py for backward compatibility.
+from .handlers import (  # noqa: E402
+    chain_of_thought_step_handler,
+    get_chain_summary_handler,
+    clear_chain_handler,
+    generate_hypotheses_handler,
+    map_assumptions_handler,
+    calibrate_confidence_handler,
+    export_chain_handler,
+    import_chain_handler,
+    create_chain_of_thought_step_handler,
+    create_get_chain_summary_handler,
+    create_clear_chain_handler,
+    create_generate_hypotheses_handler,
+    create_map_assumptions_handler,
+    create_calibrate_confidence_handler,
 )
 
 
