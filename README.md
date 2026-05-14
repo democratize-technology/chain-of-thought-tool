@@ -21,7 +21,7 @@ from chain_of_thought import TOOL_SPECS, HANDLERS
 
 # Add to your LLM tools array
 tools = [
-    *TOOL_SPECS,  # Adds chain_of_thought_step, get_chain_summary, clear_chain
+    *TOOL_SPECS,  # Adds all 8 tools
 ]
 
 # In your tool handling logic
@@ -68,6 +68,7 @@ for content in response['output']['message']['content']:
 ## Usage with OpenAI
 
 ```python
+import json
 import openai
 from chain_of_thought import TOOL_SPECS, HANDLERS
 
@@ -93,14 +94,16 @@ response = client.chat.completions.create(
 # Handle tool calls
 if response.choices[0].message.tool_calls:
     for tool_call in response.choices[0].message.tool_calls:
-        result = HANDLERS[tool_call.function.name](**eval(tool_call.function.arguments))
+        result = HANDLERS[tool_call.function.name](**json.loads(tool_call.function.arguments))
 ```
 
 ## How It Works
 
-The Chain of Thought tool provides three main functions:
+The library provides 8 tools in two categories:
 
-### 1. `chain_of_thought_step`
+### Core Reasoning Tools
+
+#### `chain_of_thought_step`
 Process individual thoughts in a structured sequence with confidence tracking:
 
 ```python
@@ -116,7 +119,7 @@ Process individual thoughts in a structured sequence with confidence tracking:
 }
 ```
 
-### 2. `get_chain_summary`
+### `get_chain_summary`
 Get a comprehensive summary of the thinking process:
 
 ```python
@@ -124,13 +127,58 @@ Get a comprehensive summary of the thinking process:
 {}
 ```
 
-### 3. `clear_chain`
+### `clear_chain`
 Reset the thinking process:
 
 ```python
 # No arguments needed  
 {}
 ```
+
+### `export_chain` / `import_chain`
+
+Persist and restore reasoning chains:
+
+```python
+HANDLERS["export_chain"](file_path="analysis.json")
+HANDLERS["import_chain"](file_path="analysis.json")
+```
+
+### Auxiliary Reasoning Tools
+
+Three additional tools provide structured scaffolding for common reasoning patterns. These use template and heuristic-based implementations — they produce structured output shapes that guide an LLM's reasoning, not AI-driven analysis.
+
+#### `generate_hypotheses`
+Returns a framework of hypothesis types (scientific, intuitive, contrarian, systematic) for an observation. Templates structure divergent thinking — the LLM fills in the substance.
+
+```python
+HANDLERS["generate_hypotheses"](observation="Why did user engagement drop 30%?", hypothesis_count=4)
+```
+
+#### `map_assumptions`
+Identifies linguistic indicators of assumptions (e.g., "clearly", "obviously", "must") using keyword-based heuristics. Returns a structured framework for critical thinking.
+
+```python
+HANDLERS["map_assumptions"](statement="Clearly the migration will improve performance", depth="deep")
+```
+
+#### `calibrate_confidence`
+Applies heuristic pattern matching (absolute language detection, domain complexity) to produce adjusted confidence with uncertainty bands. A calibration rubric for the LLM.
+
+```python
+HANDLERS["calibrate_confidence"](prediction="Revenue will grow 20%", initial_confidence=0.9, context="Q4 forecast")
+```
+
+## Capability Assessment
+
+Honest evaluation of what each tool category delivers:
+
+| Category | Tools | Implementation | What They Actually Do |
+|----------|-------|----------------|----------------------|
+| **Core** | `chain_of_thought_step`, `get_chain_summary`, `clear_chain`, `export_chain`, `import_chain` | Full stateful reasoning chain | Store, retrieve, summarize, persist, and restore structured reasoning steps with confidence tracking, evidence, assumptions, and stage classification. These are the real deal. |
+| **Auxiliary** | `generate_hypotheses`, `map_assumptions`, `calibrate_confidence` | Template/heuristic scaffolding | Produce structured output shapes using keyword matching and fixed templates. The LLM consuming these outputs performs the actual analysis. Zero-cost, zero-latency, synchronous. |
+
+**Key distinction**: Core tools manage stateful reasoning data. Auxiliary tools provide reasoning frameworks — structured containers that prompt more careful thinking. The LLM is the analyst; the library provides the scaffolding.
 
 ## Advanced Features
 
