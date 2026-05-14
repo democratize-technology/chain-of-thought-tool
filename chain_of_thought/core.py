@@ -654,6 +654,11 @@ class ChainOfThought:
                         "status": "error",
                         "message": f"Invalid step at index {idx}: 'confidence' must be a finite number"
                     }
+                if conf < 0.0 or conf > 1.0:
+                    return {
+                        "status": "error",
+                        "message": f"Invalid step at index {idx}: 'confidence' must be between 0.0 and 1.0"
+                    }
 
             reasoning_stage_val = d.get("reasoning_stage", "Analysis")
             if not isinstance(reasoning_stage_val, str):
@@ -1386,7 +1391,12 @@ class ConfidenceCalibrator:
         Returns calibrated confidence with uncertainty bands and reasoning.
         """
         # Validate inputs
-        initial_confidence = max(0.0, min(1.0, initial_confidence))
+        if not isinstance(initial_confidence, (int, float)) or isinstance(initial_confidence, bool):
+            raise ValueError("initial_confidence must be a number")
+        if isinstance(initial_confidence, float) and (math.isnan(initial_confidence) or math.isinf(initial_confidence)):
+            raise ValueError("initial_confidence must be a finite number")
+        if initial_confidence < 0.0 or initial_confidence > 1.0:
+            raise ValueError("initial_confidence must be between 0.0 and 1.0")
 
         # Analyze overconfidence patterns
         overconfidence_analysis = self.detect_overconfidence_patterns(prediction, initial_confidence)

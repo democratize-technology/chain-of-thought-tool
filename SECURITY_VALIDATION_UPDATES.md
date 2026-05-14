@@ -18,7 +18,7 @@ Updated edge case tests to match the current secure validation behavior that pre
 - Tests updated to expect rejection of values outside this range
 
 #### Confidence Value Validation
-- **Range**: -100.0 to 100.0 (allows extended range while preventing extreme values)
+- **Range**: 0.0 to 1.0 (matches tool spec, prevents invalid confidence values)
 - **float('inf')** and **float('nan')** are now explicitly rejected
 - Tests updated to expect rejection of infinity and NaN values
 - Added `math.isnan()` and `math.isinf()` checks for robust detection
@@ -81,7 +81,7 @@ This provides better API consistency and error handling for tool integrations.
 | `thought` | String, max 10,000 chars, HTML-escaped | Prevents DoS/XSS |
 | `step_number` | Integer, -10,000 to 10,000,000 | Prevents DoS |
 | `total_steps` | Integer, -10,000 to 10,000,000 | Prevents DoS |
-| `confidence` | Number, -100.0 to 100.0, no NaN/infinity | Prevents instability |
+| `confidence` | Number, 0.0 to 1.0, no NaN/infinity | Prevents instability |
 | `reasoning_stage` | String, max 100 chars, sanitized | Prevents injection |
 | `evidence` | List, max 50 items, max 500 chars each, HTML-escaped | Prevents DoS/XSS |
 | `assumptions` | List, max 50 items, max 500 chars each, HTML-escaped | Prevents DoS/XSS |

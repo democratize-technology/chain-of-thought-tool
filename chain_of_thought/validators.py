@@ -102,13 +102,13 @@ class ParameterValidator:
         # Handle NaN and infinite values
         if isinstance(confidence, float):
             if confidence != confidence:  # NaN check
-                raise ValueError("confidence must be between -100.0 and 100.0")
+                raise ValueError("confidence must be between 0.0 and 1.0")
             if confidence in (float('inf'), float('-inf')):
-                raise ValueError("confidence must be between -100.0 and 100.0")
+                raise ValueError("confidence must be between 0.0 and 1.0")
 
-        # Range validation - confidence must be between -100.0 and 100.0
-        if confidence < -100.0 or confidence > 100.0:
-            raise ValueError("confidence must be between -100.0 and 100.0")
+        # Range validation - confidence must be between 0.0 and 1.0
+        if confidence < 0.0 or confidence > 1.0:
+            raise ValueError("confidence must be between 0.0 and 1.0")
 
         # Return as float for consistency
         return float(confidence)

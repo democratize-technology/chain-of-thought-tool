@@ -80,25 +80,22 @@ class TestInputValidationEdgeCases:
     
     def test_extreme_confidence_values(self):
         """Test handling of extreme confidence values."""
-        # Confidence above 1.0
-        result = self.cot.add_step(
-            "High confidence",
-            1, 1, False,
-            confidence=1.5
-        )
-        assert result["status"] == "success"
-        assert result["confidence"] == 1.5  # Implementation doesn't clamp
-        
-        # Confidence below 0.0
+        # Confidence above 1.0 is rejected
+        with pytest.raises(ValueError, match="confidence must be between 0.0 and 1.0"):
+            self.cot.add_step("High confidence", 1, 1, False, confidence=1.5)
+
+        # Confidence below 0.0 is rejected
+        with pytest.raises(ValueError, match="confidence must be between 0.0 and 1.0"):
+            self.cot.add_step("Negative confidence", 1, 1, False, confidence=-0.5)
+
+        # Boundary values are accepted
         self.cot.clear_chain()
-        result = self.cot.add_step(
-            "Negative confidence",
-            1, 1, False,
-            confidence=-0.5
-        )
+        result = self.cot.add_step("Boundary low", 1, 1, False, confidence=0.0)
         assert result["status"] == "success"
-        assert result["confidence"] == -0.5
-        
+        self.cot.clear_chain()
+        result = self.cot.add_step("Boundary high", 1, 1, False, confidence=1.0)
+        assert result["status"] == "success"
+
         # Very large confidence
         self.cot.clear_chain()
         try:
@@ -211,7 +208,7 @@ class TestInputValidationEdgeCases:
             "नमस्ते",
             "🚀🔥💯✨🎯🏆💎🌟⭐🎉",  # Emoji sequence
             "Mixed: ASCII + 中文 + 🎯 + العربية",
-            "\n\t\r\\\"\'\`",  # Control characters
+            "\n\t\r\\\"'`",  # Control characters
             "Zero\x00width\x00characters",
             "Math symbols: ∑∏∫∆∇∂√∞",
             "Currency: $€¥£₹₽₿"
@@ -230,9 +227,9 @@ class TestInputValidationEdgeCases:
             # For security reasons, dangerous characters may be HTML-escaped
             stored_thought = self.cot.steps[0].thought
             # Check that the content is functionally equivalent (either original or escaped)
-            if test_text == "\n\t\r\\\"\'\\`":
+            if test_text == "\n\t\r\\\"'`":
                 # This specific case should be HTML-escaped for security
-                expected_escaped = '\&quot;&#x27;\`'
+                expected_escaped = '\\&quot;&#x27;`'
                 assert stored_thought == expected_escaped, f"Expected escaped text {repr(expected_escaped)}, got {repr(stored_thought)}"
             elif test_text == "Zero\x00width\x00characters":
                 # Null bytes should be removed for security
@@ -244,9 +241,9 @@ class TestInputValidationEdgeCases:
 
             # Evidence and assumptions should also be handled consistently
             stored_evidence = self.cot.steps[0].evidence[0]
-            if f"Evidence: {test_text}" == "Evidence: \n\t\r\\\"\'\\`":
+            if f"Evidence: {test_text}" == "Evidence: \n\t\r\\\"'`":
                 # Evidence preserves control chars but escapes dangerous ones
-                expected_evidence = "Evidence: \n\t\r\&quot;&#x27;\`"
+                expected_evidence = "Evidence: \n\t\r\\&quot;&#x27;`"
                 assert expected_evidence == stored_evidence, f"Expected evidence {repr(expected_evidence)}, got {repr(stored_evidence)}"
             elif f"Evidence: {test_text}" == "Evidence: Zero\x00width\x00characters":
                 # Evidence also removes null bytes
@@ -347,7 +344,7 @@ class TestJSONSerializationEdgeCases:
             assert 0.0 <= self.cot.steps[0].confidence <= 1.0
         except ValueError as e:
             # Expected behavior for infinite confidence - security validation
-            assert "confidence must be between -100.0 and 100.0" in str(e)
+            assert "confidence must be between 0.0 and 1.0" in str(e)
 
         # Test with valid confidence values that should serialize properly
         valid_confidences = [0.0, 0.5, 0.8, 1.0]
@@ -379,7 +376,7 @@ class TestJSONSerializationEdgeCases:
             assert result["status"] == "success"
         except ValueError as e:
             # Expected behavior for NaN confidence - security validation
-            assert "confidence must be between -100.0 and 100.0" in str(e)
+            assert "confidence must be between 0.0 and 1.0" in str(e)
 
         # Test normal JSON serialization behavior with valid data
         self.cot.clear_chain()
@@ -728,47 +725,22 @@ class TestConfidenceCalibratorEdgeCases:
         self.calibrator = ConfidenceCalibrator()
     
     def test_extreme_confidence_values(self):
-        """Test calibration with extreme confidence values."""
-        extreme_values = [
-            -100.0,
-            -1.0,
-            0.0,
-            1.0,
-            2.0,
-            100.0,
-            float('inf'),
-            float('-inf')
-        ]
-        
-        for confidence in extreme_values:
-            try:
-                result = self.calibrator.calibrate_confidence(
-                    "Test prediction",
-                    confidence,
-                    "Test context"
-                )
-                
-                assert isinstance(result, dict)
-                assert "status" in result
-                
-            except (ValueError, OverflowError):
-                # Expected for extreme values
-                pass
-    
+        """Test calibration rejects out-of-range confidence values."""
+        invalid_values = [-100.0, -1.0, 2.0, 100.0, float('inf'), float('-inf')]
+        for confidence in invalid_values:
+            with pytest.raises(ValueError, match="initial_confidence must be"):
+                self.calibrator.calibrate_confidence("Test prediction", confidence, "Test context")
+
+        # Boundary values are accepted
+        result_low = self.calibrator.calibrate_confidence("Test prediction", 0.0, "Test context")
+        assert result_low["status"] == "success"
+        result_high = self.calibrator.calibrate_confidence("Test prediction", 1.0, "Test context")
+        assert result_high["status"] == "success"
+
     def test_special_float_values(self):
-        """Test calibration with special float values."""
-        try:
-            result = self.calibrator.calibrate_confidence(
-                "Test prediction",
-                float('nan'),
-                "Test context"
-            )
-            
-            assert isinstance(result, dict)
-            
-        except (ValueError, TypeError):
-            # NaN handling varies
-            pass
+        """Test calibration rejects NaN confidence."""
+        with pytest.raises(ValueError, match="initial_confidence must be a finite number"):
+            self.calibrator.calibrate_confidence("Test prediction", float('nan'), "Test context")
     
     def test_empty_prediction(self):
         """Test calibration with empty prediction."""

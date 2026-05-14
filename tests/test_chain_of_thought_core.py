@@ -327,15 +327,21 @@ class TestChainOfThoughtEdgeCases:
         self.cot = ChainOfThought()
     
     def test_add_step_invalid_confidence(self):
-        """Test adding step with extreme confidence values."""
-        # Extreme confidence values should now be accepted for edge case testing
-        result = self.cot.add_step(
-            "Test step",
-            1, 1, False,
-            confidence=1.5  # > 1.0, now accepted
-        )
-        assert result["status"] == "success"
-        assert result["confidence"] == 1.5
+        """Test adding step with out-of-range confidence values."""
+        # Confidence above 1.0 is rejected
+        with pytest.raises(ValueError, match="confidence must be between 0.0 and 1.0"):
+            self.cot.add_step("Test step", 1, 1, False, confidence=1.5)
+
+        # Confidence below 0.0 is rejected
+        with pytest.raises(ValueError, match="confidence must be between 0.0 and 1.0"):
+            self.cot.add_step("Test step", 1, 1, False, confidence=-0.5)
+
+        # Boundary values are accepted
+        result_low = self.cot.add_step("Boundary low", 1, 1, False, confidence=0.0)
+        assert result_low["status"] == "success"
+        self.cot.clear_chain()
+        result_high = self.cot.add_step("Boundary high", 1, 1, False, confidence=1.0)
+        assert result_high["status"] == "success"
     
     def test_empty_thought_content(self):
         """Test that empty thought content is now accepted for edge case testing."""

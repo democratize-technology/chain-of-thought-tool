@@ -334,11 +334,11 @@ class TestInputValidationSecurity:
         with pytest.raises(ValueError, match="confidence must be a number"):
             self.cot.add_step("test", 1, 1, False, confidence="not_number")
         
-        with pytest.raises(ValueError, match="confidence must be between -100.0 and 100.0"):
-            self.cot.add_step("test", 1, 1, False, confidence=-101.0)
-        
-        with pytest.raises(ValueError, match="confidence must be between -100.0 and 100.0"):
-            self.cot.add_step("test", 1, 1, False, confidence=101.0)
+        with pytest.raises(ValueError, match="confidence must be between 0.0 and 1.0"):
+            self.cot.add_step("test", 1, 1, False, confidence=-1.0)
+
+        with pytest.raises(ValueError, match="confidence must be between 0.0 and 1.0"):
+            self.cot.add_step("test", 1, 1, False, confidence=2.0)
         
         # Test invalid next_step_needed type
         with pytest.raises(ValueError, match="next_step_needed must be a boolean"):
@@ -828,7 +828,7 @@ class TestSecurityRegression:
             1000,         # Maximum total steps (security limit)
             True,
             "A" * 100,    # Maximum stage length
-            100.0,        # Maximum confidence
+            1.0,          # Maximum confidence
             list(range(1, 51)),  # Maximum dependencies
             list(range(51, 101)), # Maximum contradicts
             ["A" * 500] * 50,     # Maximum evidence
