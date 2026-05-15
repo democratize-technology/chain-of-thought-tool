@@ -137,6 +137,7 @@ requirements:
       pattern: "ServiceRegistry|RateLimiter|_safe_json_dumps"
       paths:
         - "chain_of_thought/core.py"
+        - "chain_of_thought/concurrency.py"
       expect: present
 <!-- /adr:requirements -->
 
