@@ -142,5 +142,8 @@ cython_debug/
 .DS_Store
 .claude
 
+# Artifact directory
+.scatter/
+
 # Backup files
 *.backup
