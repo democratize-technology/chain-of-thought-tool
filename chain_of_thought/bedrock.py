@@ -189,30 +189,6 @@ class AsyncChainOfThoughtProcessor:
         except asyncio.TimeoutError:
             raise TimeoutError(f"AWS Bedrock call timed out after {self.aws_call_timeout} seconds")
 
-    async def _safe_tool_call(self, handler_func: Callable, **kwargs) -> str:
-        """
-        Execute tool handler call with proper timeout handling.
-
-        Args:
-            handler_func: Tool handler function
-            **kwargs: Parameters for handler
-
-        Returns:
-            Handler response JSON string
-
-        Raises:
-            TimeoutError: If tool call exceeds timeout
-        """
-        try:
-            loop = asyncio.get_running_loop()
-            result = await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: handler_func(**kwargs)),
-                timeout=self.tool_call_timeout
-            )
-            return result
-        except asyncio.TimeoutError:
-            raise TimeoutError(f"Tool call timed out after {self.tool_call_timeout} seconds")
-
     async def process_tool_loop(self,
                               bedrock_client,
                               initial_request: Dict[str, Any],
@@ -273,7 +249,7 @@ class AsyncChainOfThoughtProcessor:
                             tool_results.append({
                                 "toolResult": {
                                     "toolUseId": tool_use_id,
-                                    "content": [{"text": _safe_json_dumps({"error": f"Tool call timed out after {self.tool_call_timeout} seconds"})}],
+                                    "content": [{"text": _safe_json_dumps({"status": "error", "message": f"Tool call timed out after {self.tool_call_timeout} seconds"})}],
                                     "status": "error"
                                 }
                             })
@@ -281,7 +257,7 @@ class AsyncChainOfThoughtProcessor:
                             tool_results.append({
                                 "toolResult": {
                                     "toolUseId": tool_use_id,
-                                    "content": [{"text": _safe_json_dumps({"error": str(e)})}],
+                                    "content": [{"text": _safe_json_dumps({"status": "error", "message": str(e)})}],
                                     "status": "error"
                                 }
                             })

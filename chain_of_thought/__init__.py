@@ -47,7 +47,7 @@ TOOL_SPECS = [
     {
         "toolSpec": {
             "name": "chain_of_thought_step",
-            "description": "Add a step to structured chain-of-thought reasoning. Enables systematic problem-solving with confidence tracking, evidence, and assumptions.",
+            "description": "Add or revise a step in structured chain-of-thought reasoning. Submitting an existing step_number replaces (revises) that step in place. Enables systematic problem-solving with confidence tracking, evidence, and assumptions.",
             "inputSchema": {
                 "json": {
                     "type": "object",

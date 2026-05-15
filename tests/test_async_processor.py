@@ -339,7 +339,8 @@ class TestAsyncChainOfThoughtProcessor:
         
         tool_result_content = tool_result_message["content"][0]["toolResult"]["content"][0]["text"]
         error_response = json.loads(tool_result_content)
-        assert "error" in error_response
+        assert error_response["status"] == "error"
+        assert "message" in error_response
     
     @pytest.mark.asyncio
     async def test_max_iterations_limit(self):
