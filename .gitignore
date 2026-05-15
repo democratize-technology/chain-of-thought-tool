@@ -1,149 +1,40 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
+# Default deny — only allowlist what belongs in version control
+*
 
-# C extensions
-*.so
+# Core config
+!.gitignore
+!LICENSE
+!README.md
+!CHANGELOG.md
+!CLAUDE.md
+!pyproject.toml
+!setup.py
+!MANIFEST.in
+!.flake8
 
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+# Documentation
+!docs/
+!docs/**
+!CONFIGURATION.md
+!DEPENDENCY_INJECTION.md
+!PUBLISHING.md
+!REFACTORING_DOCUMENTATION.md
+!SECURITY_VALIDATION_UPDATES.md
+!TEST_FIXING_EPISODE.md
 
-# PyInstaller
-*.manifest
-*.spec
+# Source
+!chain_of_thought/
+!chain_of_thought/**
+chain_of_thought/__pycache__/
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
+# Tests
+!tests/
+!tests/**
+tests/__pycache__/
 
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-cover/
+# Examples
+!example_*.py
 
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-.pybuilder/
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# pipenv
-Pipfile.lock
-
-# poetry
-poetry.lock
-
-# PEP 582
-__pypackages__/
-
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Spyder project settings
-.spyderproject
-.spyproject
-
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# pytype static type analyzer
-.pytype/
-
-# Cython debug symbols
-cython_debug/
-
-# VS Code
-.vscode/
-
-# PyCharm
-.idea/
-
-# macOS
-.DS_Store
-.claude
-
-# Artifact directory
-.scatter/
-
-# Backup files
-*.backup
+# CI
+!.github/
+!.github/**
