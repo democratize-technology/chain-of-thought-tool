@@ -12,6 +12,8 @@ LLM function-calling APIs (AWS Bedrock, OpenAI, Anthropic) provide tool-use capa
 
 This library provides that mechanism as a zero-dependency Python package with drop-in tool specifications and handler functions compatible with any LLM function-calling API.
 
+**What this library is:** A stateful reasoning tracker — a function-calling tool surface where the LLM calls tools to record each reasoning step. Named for Wei et al. 2022 "Chain of Thought Prompting" (the goal-lineage) but structurally descended from the MCP `sequential-thinking` server pattern (the shape-lineage). The LLM is the reasoner; this library is the notebook.
+
 ## 2. Scope
 
 ### In Scope
@@ -33,6 +35,7 @@ This library provides that mechanism as a zero-dependency Python package with dr
 - UI or visualization of reasoning chains
 - Authentication or authorization of end users
 - Provider-specific adapters beyond AWS Bedrock (OpenAI/Anthropic are format-compatible but not wrapped)
+- Self-consistency sampling (Wang et al. 2022) — this library is not in the LLM-calling layer where sampling would naturally live. Callers can implement it externally by running multiple chains and comparing summaries (see ADR-0014 for a recipe)
 
 ## 3. Architecture
 
@@ -72,12 +75,18 @@ This library is named for Wei et al. 2022 but structurally descended from the MC
 | `assumptions` | `List[str]` | no | `[]` | Max 50 items; 500 chars each; HTML-escaped |
 | `timestamp` | `str` | no | ISO 8601 | Auto-generated if not provided |
 
+**Revision Semantics.** When `add_step()` receives a `step_number` that already exists, the prior step is replaced in-place via `_handle_step_revision`. The response includes `"is_revision": true` to signal this occurred. This is implicit revision — there is no separate `is_revision` input field or `revises_step` pointer. This is a known divergence from the MCP `sequential-thinking` reference, which uses explicit `isRevision` and `revisesThought` fields (see ADR-0013).
+
+**Storage Topology.** Steps are stored as a flat `List[ThoughtStep]` indexed by position. The `dependencies` and `contradicts` fields create an optional primarily-linear DAG structure, but the library performs no cycle detection, topological sort, or graph traversal. For non-linear reasoning topologies, see the sibling `graph-of-thought` library (ADR-0015).
+
 ### 3.3 Tool Specifications (8 Tools)
 
 The library exposes 8 tools via `TOOL_SPECS`:
 
 #### 3.3.1 `chain_of_thought_step`
 Add or revise a reasoning step. If `step_number` matches an existing step, it replaces it (revision). Returns progress, confidence, and contextual feedback.
+
+**Branching is not supported.** Steps form a flat sequence; there is no `branch_from_step` or `branch_id` field. This is a known gap relative to the MCP `sequential-thinking` reference, which supports branching via `branchFromThought` and `branchId` fields (see ADR-0012).
 
 #### 3.3.2 `get_chain_summary`
 Returns: total steps, stages covered, overall confidence, confidence by stage, chain (with thought previews), insights (evidence, assumptions, contradictions), content synthesis (full thoughts grouped by stage), completion status (% of 5 canonical stages present), and metadata.
@@ -88,11 +97,17 @@ Resets the chain. All steps discarded.
 #### 3.3.4 `generate_hypotheses`
 Accepts an `observation` string and optional `hypothesis_count` (1–4). Generates scientific, intuitive, contrarian, and systematic hypotheses. Ranks by testability score.
 
+**Genealogy:** Divergent thinking rubrics (de Bono's lateral thinking, Osborn's brainstorming) and abductive reasoning (Peirce's framework for generating explanatory hypotheses). Not descended from Wei et al. 2022 CoT lineage (see ADR-0016).
+
 #### 3.3.5 `map_assumptions`
 Accepts a `statement` string and optional `depth` (`"surface"` | `"deep"`). Extracts explicit and implicit assumptions with criticality assessment and dependency graph.
 
+**Genealogy:** Critical thinking and informal logic pedagogy (systematic identification of explicit/implicit premises) and design thinking (assumption surfacing during ideation). Not descended from Wei et al. 2022 CoT lineage (see ADR-0016).
+
 #### 3.3.6 `calibrate_confidence`
 Accepts `prediction`, `initial_confidence` (0.0–1.0), and optional `context`. Detects overconfidence patterns, applies calibration adjustment, returns uncertainty bands.
+
+**Genealogy:** Calibration research (Lichtenstein, Fischhoff & Phillips, 1982) on overconfidence in judgment, and forecasting literature (Tetlock's superforecasting research on debiasing confidence). Not descended from Wei et al. 2022 CoT lineage (see ADR-0016).
 
 #### 3.3.7 `export_chain`
 Accepts `file_path`. Serializes all steps + metadata to JSON file.
