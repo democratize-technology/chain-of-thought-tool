@@ -37,7 +37,10 @@ class BedrockStopReasonHandler(StopReasonHandler):
                 "get_chain_summary": self._create_summary_handler(),
                 "clear_chain": self._create_clear_handler(),
                 "export_chain": self._create_handler_factory("export_chain", takes_kwargs=True),
-                "import_chain": self._create_handler_factory("import_chain", takes_kwargs=True)
+                "import_chain": self._create_handler_factory("import_chain", takes_kwargs=True),
+                "generate_hypotheses": self._create_handler_factory("generate_hypotheses", takes_kwargs=True),
+                "map_assumptions": self._create_handler_factory("map_assumptions", takes_kwargs=True),
+                "calibrate_confidence": self._create_handler_factory("calibrate_confidence", takes_kwargs=True),
             }
         else:
             # Use global handlers
@@ -47,13 +50,19 @@ class BedrockStopReasonHandler(StopReasonHandler):
                 clear_chain_handler,
                 export_chain_handler,
                 import_chain_handler,
+                generate_hypotheses_handler,
+                map_assumptions_handler,
+                calibrate_confidence_handler,
             )
             self.handlers = handlers or {
                 "chain_of_thought_step": chain_of_thought_step_handler,
                 "get_chain_summary": get_chain_summary_handler,
                 "clear_chain": clear_chain_handler,
                 "export_chain": export_chain_handler,
-                "import_chain": import_chain_handler
+                "import_chain": import_chain_handler,
+                "generate_hypotheses": generate_hypotheses_handler,
+                "map_assumptions": map_assumptions_handler,
+                "calibrate_confidence": calibrate_confidence_handler,
             }
 
     def _create_handler_factory(self, method_name: str, takes_kwargs: bool = False):
@@ -112,7 +121,7 @@ class BedrockStopReasonHandler(StopReasonHandler):
         if asyncio.iscoroutinefunction(handler):
             result = await handler(**tool_args)
         else:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(None, lambda: handler(**tool_args))
 
         if isinstance(result, str):
@@ -169,7 +178,7 @@ class AsyncChainOfThoughtProcessor:
             TimeoutError: If AWS call exceeds timeout
         """
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             return await asyncio.wait_for(
                 loop.run_in_executor(
                     None,
@@ -195,9 +204,9 @@ class AsyncChainOfThoughtProcessor:
             TimeoutError: If tool call exceeds timeout
         """
         try:
-            # Run tool handler in thread pool with timeout
+            loop = asyncio.get_running_loop()
             result = await asyncio.wait_for(
-                asyncio.to_thread(handler_func, **kwargs),
+                loop.run_in_executor(None, lambda: handler_func(**kwargs)),
                 timeout=self.tool_call_timeout
             )
             return result

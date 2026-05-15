@@ -1,11 +1,22 @@
 from setuptools import setup, find_packages
 
+# Read version dynamically from the package
+def get_version():
+    about = {}
+    with open("chain_of_thought/__init__.py", "r", encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("__version__"):
+                _, value = line.split("=", 1)
+                about["__version__"] = value.strip().strip('"').strip("'")
+                break
+    return about.get("__version__", "0.0.0")
+
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
     name="chain-of-thought-tool",
-    version="0.3.0",
+    version=get_version(),
     author="Code Developer",
     author_email="code-developer@democratize.technology",
     description="A lightweight Chain of Thought reasoning tool for LLM function calling",
@@ -27,8 +38,7 @@ setup(
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
     ],
     python_requires=">=3.8",
-    install_requires=[
-    ],
+    install_requires=[],
     extras_require={
         "dev": [
             "pytest>=7.0",

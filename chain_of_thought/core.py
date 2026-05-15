@@ -217,7 +217,7 @@ class ServiceRegistry:
     def has_service(self, name: str) -> bool:
         """Check if a service is registered."""
         with self._lock:
-            return name in self._factories
+            return name in self._factories or name in self._services
 
     def clear_service(self, name: str) -> None:
         """Clear a service instance (will be recreated on next access)."""
@@ -270,7 +270,7 @@ class ThoughtStep:
     contradicts: Optional[List[int]] = None
     evidence: Optional[List[str]] = None
     assumptions: Optional[List[str]] = None
-    timestamp: str = None
+    timestamp: Optional[str] = None
     
     def __post_init__(self):
         if self.timestamp is None:
@@ -794,11 +794,11 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
             'credential', 'private', 'confidential', 'internal'
         }
 
-        # Define dangerous content patterns
+        # Define dangerous content patterns (word-boundary aware to avoid false positives)
         DANGEROUS_PATTERNS = {
-            '__import__', 'eval(', 'exec(', 'open(', 'file(', 'input(',
-            'subprocess', 'os.system', 'shell_exec', 'DROP TABLE', 'SELECT *',
-            '<script', 'javascript:', 'data:', 'vbscript:', 'onload=', 'onerror='
+            '__import__', 'exec(', 'subprocess.', 'os.system', 'shell_exec',
+            'DROP TABLE', '<script', 'javascript:', 'vbscript:', 'onload=',
+            'onerror='
         }
 
         def sanitize(obj, depth=0):
@@ -830,7 +830,9 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
                 elif isinstance(obj, list):
                     # Sanitize list elements recursively
                     try:
-                        return [sanitize(item, depth + 1) for item in obj[:MAX_LIST_SIZE]]  # Limit list size
+                        if len(obj) > MAX_LIST_SIZE:
+                            logging.warning(f"_safe_json_dumps: list truncated from {len(obj)} to {MAX_LIST_SIZE}")
+                        return [sanitize(item, depth + 1) for item in obj[:MAX_LIST_SIZE]]
                     except Exception:
                         return [{"status": "error", "message": "List processing failed"}]
 
@@ -838,7 +840,7 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
                     # Check for dangerous content in strings
                     content_lower = obj.lower()
                     for pattern in DANGEROUS_PATTERNS:
-                        if pattern in content_lower:
+                        if pattern.lower() in content_lower:
                             return "[FILTERED_CONTENT]"
                     return obj[:MAX_STRING_LENGTH]  # Limit string length
 

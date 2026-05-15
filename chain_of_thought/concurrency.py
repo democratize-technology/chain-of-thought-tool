@@ -203,7 +203,7 @@ class ThreadAwareChainOfThought:
     """Thread-safe version for production use with dependency injection support."""
 
     # Hybrid approach: WeakValueDictionary for automatic cleanup + strong refs for active conversations
-    _instances: 'weakref.WeakValueDictionary[str, Any]' = weakref.WeakValueDictionary()
+    _instances: weakref.WeakValueDictionary[str, Any] = weakref.WeakValueDictionary()
     _strong_refs: Dict[str, Any] = {}  # Keep strong refs to prevent premature GC
     _lock = threading.RLock()
 

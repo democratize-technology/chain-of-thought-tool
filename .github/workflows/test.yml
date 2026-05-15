@@ -41,11 +41,9 @@ jobs:
     
     - name: Test with pytest
       run: |
-        # Run basic import tests if full test suite doesn't exist yet
-        python -c "import chain_of_thought; print('✓ Import successful')"
+        python -c "import chain_of_thought; print('Import successful')"
         python -m py_compile chain_of_thought/*.py
-        # Uncomment when test suite is ready:
-        # pytest tests/ --cov=chain_of_thought --cov-report=term-missing
+        pytest tests/ --cov=chain_of_thought --cov-report=term-missing --cov-fail-under=80
 
   package-test:
     runs-on: ubuntu-latest
