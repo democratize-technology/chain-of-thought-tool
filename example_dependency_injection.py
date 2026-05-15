@@ -6,18 +6,15 @@ This file shows how to use the ServiceRegistry for better testability,
 configuration, and thread safety while maintaining backward compatibility.
 """
 
+from typing import Any, Dict, List, Optional
+
 from chain_of_thought import (
     # Legacy API (still works)
     HANDLERS,
 
-    # New DI API
+    # DI API — create_generic_handler is the public factory
     ServiceRegistry,
-    create_chain_of_thought_step_handler,
-    create_get_chain_summary_handler,
-    create_clear_chain_handler,
-    create_generate_hypotheses_handler,
-    create_map_assumptions_handler,
-    create_calibrate_confidence_handler,
+    create_generic_handler,
 
     # Core classes
     ChainOfThought,
@@ -50,8 +47,8 @@ def example_simple_dependency_injection():
     registry.initialize_default_services()
 
     # Create handlers using DI
-    step_handler = create_chain_of_thought_step_handler(registry)
-    summary_handler = create_get_chain_summary_handler(registry)
+    step_handler = create_generic_handler("chain_of_thought_step", registry=registry)
+    summary_handler = create_generic_handler("get_chain_summary", registry=registry)
 
     # Use handlers
     result1 = step_handler(
@@ -143,11 +140,20 @@ def example_thread_safe_multi_tenant():
 
 class CustomChainOfThought(ChainOfThought):
 
-    def add_step(self, **kwargs):
-        print(f"🔧 Custom handler processing step {kwargs.get('step_number')}")
-        result = super().add_step(**kwargs)
-        # Add custom behavior here
-        return result
+    def add_step(self, thought: str, step_number: int, total_steps: int,
+                 next_step_needed: bool, reasoning_stage: str = "Analysis",
+                 confidence: float = 0.8,
+                 dependencies: Optional[List[int]] = None,
+                 contradicts: Optional[List[int]] = None,
+                 evidence: Optional[List[str]] = None,
+                 assumptions: Optional[List[str]] = None) -> Dict[str, Any]:
+        print(f"🔧 Custom handler processing step {step_number}")
+        return super().add_step(
+            thought=thought, step_number=step_number, total_steps=total_steps,
+            next_step_needed=next_step_needed, reasoning_stage=reasoning_stage,
+            confidence=confidence, dependencies=dependencies,
+            contradicts=contradicts, evidence=evidence, assumptions=assumptions,
+        )
 
 
 def example_custom_service_implementation():
@@ -159,7 +165,7 @@ def example_custom_service_implementation():
     registry.register_factory('chain_of_thought', lambda: CustomChainOfThought())
 
     # Create handler that uses custom implementation
-    handler = create_chain_of_thought_step_handler(registry)
+    handler = create_generic_handler("chain_of_thought_step", registry=registry)
 
     result = handler(
         thought="This will use the custom ChainOfThought implementation",
@@ -198,16 +204,19 @@ def example_service_lifecycle_management():
 def example_all_handlers_with_di():
     print("\n=== All Handlers with Dependency Injection ===")
 
+    from chain_of_thought.concurrency import RateLimiter
+
     registry = ServiceRegistry()
     registry.initialize_default_services()
+    limiter = RateLimiter()
 
-    # Create all handlers
-    step_handler = create_chain_of_thought_step_handler(registry)
-    summary_handler = create_get_chain_summary_handler(registry)
-    clear_handler = create_clear_chain_handler(registry)
-    hypothesis_handler = create_generate_hypotheses_handler(registry)
-    assumption_handler = create_map_assumptions_handler(registry)
-    confidence_handler = create_calibrate_confidence_handler(registry)
+    # Create all handlers via the generic factory with isolated rate limiter
+    step_handler = create_generic_handler("chain_of_thought_step", registry=registry, rate_limiter=limiter)
+    summary_handler = create_generic_handler("get_chain_summary", registry=registry, rate_limiter=limiter)
+    clear_handler = create_generic_handler("clear_chain", registry=registry, rate_limiter=limiter)
+    hypothesis_handler = create_generic_handler("generate_hypotheses", registry=registry, rate_limiter=limiter)
+    assumption_handler = create_generic_handler("map_assumptions", registry=registry, rate_limiter=limiter)
+    confidence_handler = create_generic_handler("calibrate_confidence", registry=registry, rate_limiter=limiter)
 
     # Add a reasoning step
     step_handler(
