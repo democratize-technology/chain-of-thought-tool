@@ -1,7 +1,7 @@
 ---
 id: ADR-0006
 title: 3-Tier API Stability Contract
-status: proposed
+status: accepted
 date: 2026-05-14
 decision_makers:
   - Engineering
@@ -253,8 +253,8 @@ tradeoffs:
 approval:
   required_approvers:
     - role: Engineering
-      approved: false
-      date: null
+      approved: true
+      date: "2026-05-14"
   review_schedule: annually
   next_review: null
 ```

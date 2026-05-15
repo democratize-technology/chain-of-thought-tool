@@ -1,163 +1,87 @@
-# sequential-thinking-tool - Claude Code Configuration
+# chain-of-thought-tool - Claude Code Configuration
 
-## 🧠 PROJECT OVERVIEW
-**Type**: Python Library - LLM Function Calling Tools  
-**Purpose**: Lightweight Chain of Thought reasoning capabilities for any LLM API  
-**Architecture**: Tool-based function calling with async AWS Bedrock integration  
-**Maturity**: Alpha (v0.1.0) - Well-architected but needs testing infrastructure
+## PROJECT OVERVIEW
+**Type**: Python Library - LLM Function Calling Tools
+**Purpose**: Lightweight Chain of Thought reasoning capabilities for any LLM API
+**Version**: 0.3.0
+**Architecture**: Tool-based function calling with async AWS Bedrock integration
+**Maturity**: Alpha - Well-architected with comprehensive test infrastructure (321 tests, 80% coverage)
+**Identity**: Named for Wei et al. 2022 "Chain of Thought" prompting; structurally descended from MCP `sequential-thinking` server pattern. See ADR-0010/0011 for dual-anchor model.
 
-## 🏗️ CORE ARCHITECTURE
+## CORE ARCHITECTURE
 
 ### Design Patterns
 * **Tool-based Function Calling**: Drop-in compatibility with LLM APIs
-* **Zero Dependencies**: Pure Python approach for maximum compatibility  
-* **Multi-tenant Thread Safety**: Production-ready conversation isolation
-* **stopReason Integration**: Native AWS Bedrock tool loop handling
+* **Zero Dependencies**: Pure Python approach for maximum compatibility (ADR-0002)
+* **Multi-tenant Thread Safety**: Production-ready conversation isolation (ADR-0004)
+* **stopReason Integration**: Native AWS Bedrock tool loop handling (ADR-0009)
 
-### Key Components
+### Module Layout (7 modules, ~3,756 LOC)
 ```
 chain_of_thought/
-├── __init__.py          # Tool specs (TOOL_SPECS, HANDLERS) + exports
-├── core.py             # Main logic (461 lines, dataclasses + async)
-example_bedrock_integration.py  # Complete AWS integration example
-setup.py               # Clean packaging, no external deps
+├── __init__.py       # Tool specs (TOOL_SPECS, HANDLERS) + exports (300 lines)
+├── core.py           # ChainOfThought, ThoughtStep, ServiceRegistry (938 lines)
+├── handlers.py       # Handler wrapper functions (84 lines)
+├── bedrock.py        # AsyncChainOfThoughtProcessor, StopReasonHandler (345 lines)
+├── concurrency.py    # ThreadAwareChainOfThought, RateLimiter (347 lines)
+├── validators.py     # ParameterValidator - input validation + XSS prevention (596 lines)
+├── security.py       # RequestValidator - Bedrock request sanitization (445 lines)
+├── auxiliary.py      # HypothesisGenerator, AssumptionMapper, ConfidenceCalibrator (701 lines)
+└── py.typed          # PEP 561 marker
 ```
 
 ### Three Usage Patterns
 1. **Simple**: Global singleton for basic usage
-2. **Production**: `ThreadAwareChainOfThought` for multi-conversation apps  
+2. **Production**: `ThreadAwareChainOfThought` for multi-conversation apps
 3. **AWS Bedrock**: `AsyncChainOfThoughtProcessor` for stopReason patterns
 
-## 🔧 DEVELOPMENT WORKFLOW
+### API Stability Tiers (ADR-0006)
+* **Tier 1 (Stable)**: Tool names, TOOL_SPECS schemas - major version bump for breaks
+* **Tier 2 (Evolving)**: Python class API, public methods - minor version bump
+* **Tier 3 (Internal)**: Implementation details - no stability guarantee
+
+## DEVELOPMENT WORKFLOW
 
 ### Quick Start
 ```bash
-# Install in development mode
 pip install -e .
-
-# Install dev dependencies
 pip install -e ".[dev]"
-
-# Test the library (currently missing - HIGH PRIORITY)
-# pytest
-
-# Format and lint (configurations missing)
-# black .
-# flake8
-```
-
-### What Actually Works Right Now
-```bash
-# Syntax and import validation
-python -m py_compile chain_of_thought/*.py
-python -c "import chain_of_thought; print('Import successful')"
-
-# Manual integration testing
-python example_bedrock_integration.py
-
-# Basic AWS credential check
-aws sts get-caller-identity
-
-# Package build verification
-python setup.py check
+pytest                           # 321 tests, 80% coverage enforced
+black .                          # 88 char line length
+flake8                           # Configured in pyproject.toml and .flake8
+mypy chain_of_thought/           # Strict mode
 ```
 
 ### Build & Distribution
 ```bash
-# Build package
-python setup.py sdist bdist_wheel
-
-# Test locally
+python3 -m build                 # Uses pyproject.toml (canonical)
 pip install dist/chain-of-thought-tool-*.whl
 ```
 
-## 🚨 CRITICAL GAPS (Immediate Priorities)
+## TEST INFRASTRUCTURE
 
-### 1. Testing Infrastructure (URGENT)
-```bash
-# Missing: Complete test suite
-# Need: pytest configuration, unit tests, integration tests
-# Priority: CRITICAL - This is a tool library, testing is essential
-```
+### Test Suite
+* 321 tests across 19 test files
+* Security vulnerability tests (XSS, injection, JSON serialization)
+* Thread safety and concurrency tests
+* Async timeout and edge case tests
+* Coverage: 80% minimum enforced by pyproject.toml
 
-### 2. Development Automation (HIGH)
-```bash
-# Missing: .github/workflows/, pre-commit hooks
-# Need: CI/CD pipeline, automated testing, code quality checks
-# Files needed: .github/workflows/test.yml, .pre-commit-config.yaml
-```
+### Test Categories (markers)
+`unit`, `integration`, `async_test`, `thread_safety`, `mock`, `edge_case`, `slow`, `security`, `service_registry`, `memory_leak`, `async_timeout`, `json_vulnerability`
 
-### 3. Code Quality Setup (MEDIUM)
-```bash
-# Missing: Configuration files for declared dev dependencies
-# Need: pytest.ini, pyproject.toml (black config), .flake8
-# Currently: setup.py declares pytest/black/flake8 but no configs exist
-```
-
-## 🎯 SPECIALIZED AGENT RECOMMENDATIONS
-
-### Immediate Delegation Tasks
-1. **tester** → Create comprehensive test suite (unit + integration tests)
-2. **oss-readiness** → Setup CI/CD pipeline and PyPI publishing workflow
-3. **architect** → Review async patterns and thread safety implementation
-4. **code-reviewer** → Assess code quality and suggest improvements
-
-### Agent Workflow
-```bash
-# Start with testing foundation
-Task(tester) → "Create pytest suite for chain_of_thought module"
-
-# Then setup automation  
-Task(oss-readiness) → "Setup GitHub Actions CI/CD and PyPI workflow"
-
-# Code quality pass
-Task(code-reviewer) → "Review architecture and suggest improvements"
-
-# Architecture validation
-Task(architect) → "Validate async patterns and stopReason integration"
-```
-
-## 🔍 UNIQUE PROJECT FEATURES
-
-### stopReason Integration Innovation
-```python
-# This library's key innovation: Native Bedrock tool loop handling
-async def process_tool_loop(self, bedrock_client, initial_request):
-    # Automatically handles stopReason="tool_use" vs "end_turn"
-    # Maps CoT "next_step_needed" to Bedrock flow control
-```
-
-### Confidence & Evidence Tracking
-```python
-# Built-in reasoning metadata
-{
-    "confidence": 0.8,
-    "evidence": ["Market data", "User research"],
-    "assumptions": ["Stable interest rates"],
-    "contradicts": [2, 3]  # References to other steps
-}
-```
-
-### Zero Dependency Philosophy
-* No external libraries required
-* Pure Python 3.8+ compatibility
-* Drop-in integration with any LLM API
-
-## 📊 INTEGRATION PATTERNS
+## INTEGRATION PATTERNS
 
 ### AWS Bedrock (Primary)
 ```python
 from chain_of_thought import TOOL_SPECS, AsyncChainOfThoughtProcessor
-
-# Direct integration with Converse API
 bedrock.converse(toolConfig={"tools": TOOL_SPECS})
 ```
 
 ### OpenAI/Anthropic
 ```python
-# Convert format for other providers
 openai_tools = [{
-    "type": "function", 
+    "type": "function",
     "function": {
         "name": tool["toolSpec"]["name"],
         "description": tool["toolSpec"]["description"],
@@ -166,112 +90,28 @@ openai_tools = [{
 } for tool in TOOL_SPECS]
 ```
 
-## ⚡ COMMON OPERATIONS
+## SECURITY
+* **Input Validation**: Comprehensive via ParameterValidator (XSS, Unicode, injection)
+* **Request Validation**: Bedrock request sanitization via RequestValidator
+* **Resource Limits**: MAX_RECURSION_DEPTH=50, MAX_IMPORT_STEPS=10000, rate limiting
+* **Thread Safety**: RLock-protected dictionaries and chains
 
-### Testing New Features
-```bash
-# Currently manual - needs automation
-python example_bedrock_integration.py
+## ARCHITECTURE DECISIONS
 
-# Should be:
-# pytest tests/
-# pytest tests/integration/
-```
+16 ADRs in `docs/adr/` covering:
+- ADR-0002: Zero external dependencies
+- ADR-0003: Bedrock Converse API as primary format
+- ADR-0004: WeakValueDictionary hybrid for multi-tenant isolation
+- ADR-0005: Handler factory with cross-cutting concerns
+- ADR-0006: 3-tier API stability contract
+- ADR-0007: Auxiliary tools as structural scaffolding (honest capability docs)
+- ADR-0008: 5 canonical reasoning stages
+- ADR-0009: Async Bedrock tool loop orchestration
+- ADR-0010-0016: Drift analysis vs canonical references
 
-### Adding New Tool Functions  
-1. Add tool spec to `__init__.py` TOOL_SPECS
-2. Implement handler in `core.py`
-3. Add to HANDLERS mapping
-4. **Missing**: Add tests for new functionality
+## SPECIALIZED AGENT RECOMMENDATIONS
 
-### Debugging Integration Issues
-```bash
-# Use the example file for testing
-python example_bedrock_integration.py
-
-# Check AWS credentials
-aws sts get-caller-identity
-
-# Verify tool loop behavior
-# (Currently requires manual inspection)
-```
-
-## 🧠 CLAUDE CODE MEMORY INTEGRATION
-
-### Pattern Storage & Retrieval
-```bash
-# Before implementing new features, check for existing patterns
-graphiti:search_nodes → query="sequential thinking tool patterns"
-graphiti:search_facts → query="AWS Bedrock stopReason integration"
-
-# After successful implementation, store for future reference
-graphiti:add_episode → name="Feature: [description]"
-                    → episode_body="Implementation approach, gotchas, performance"
-                    → group_id="sequential-thinking-tool"
-```
-
-### Common Memory Queries
-```bash
-# Architecture patterns
-graphiti:search_nodes → "tool calling patterns", "async processing"
-
-# Integration solutions  
-graphiti:search_facts → "Bedrock integration", "multi-provider support"
-
-# Development solutions
-graphiti:search_nodes → "testing setup", "CI/CD pipeline"
-```
-
-### Storing Successful Solutions
-```python
-# After completing major features
-graphiti:add_episode(
-    name="AWS Bedrock Tool Loop Implementation",
-    episode_body="""
-    Pattern: AsyncChainOfThoughtProcessor with stopReason handling
-    Key insight: Map 'next_step_needed' boolean to Bedrock flow control
-    Performance: Reduces API calls by 40% vs polling approach
-    Gotchas: Requires careful async context management
-    """,
-    group_id="sequential-thinking-tool"
-)
-```
-
-## 🔒 SECURITY CONSIDERATIONS
-* **Input Validation**: Tool inputs should be validated (currently basic)
-* **Resource Limits**: No limits on reasoning steps or memory usage
-* **Thread Safety**: Properly implemented via ThreadAwareChainOfThought
-* **AWS Credentials**: Relies on standard AWS credential chain
-
-## 🎯 SUCCESS METRICS
-* **Adoption**: Integration simplicity (currently excellent)
-* **Reliability**: Test coverage (currently 0% - critical gap)
-* **Performance**: Async efficiency (good architecture, needs benchmarks)
-* **Documentation**: Usage clarity (excellent README, needs API docs)
-
-## 📈 GROWTH OPPORTUNITIES
-1. **Testing Foundation**: Essential for library credibility
-2. **PyPI Publishing**: Setup automated releases
-3. **Performance Benchmarks**: Measure async efficiency
-4. **Type Safety**: Add mypy support for better DX
-   ```bash
-   # Setup mypy configuration (missing but declared in setup.py)
-   cat > mypy.ini << EOF
-   [mypy]
-   python_version = 3.8
-   warn_return_any = True
-   warn_unused_configs = True
-   disallow_untyped_defs = True
-   
-   [mypy-chain_of_thought.*]
-   strict = True
-   EOF
-   
-   # Run type checking
-   mypy chain_of_thought/
-   ```
-5. **Integration Helpers**: More LLM provider adapters
-
----
-
-**BOTTOM LINE**: Excellent architecture and innovative stopReason integration, but critically missing testing infrastructure. Priority #1 is comprehensive test suite, then CI/CD automation.
+* **architect** -> Review async patterns and thread safety
+* **code-reviewer** -> Assess code quality
+* **security-engineer** -> Validate input sanitization and injection prevention
+* **oss-readiness** -> PyPI publishing readiness review

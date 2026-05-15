@@ -26,14 +26,16 @@ setup(
         "Topic :: Software Development :: Libraries :: Python Modules",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
     ],
-    python_requires=">=3.8.1",
+    python_requires=">=3.8",
     install_requires=[
     ],
     extras_require={
         "dev": [
-            "pytest>=6.0",
-            "black>=21.0",
-            "flake8>=3.9",
+            "pytest>=7.0",
+            "pytest-cov>=4.0",
+            "black>=23.0",
+            "flake8>=6.0",
+            "mypy>=1.0",
         ],
     },
     keywords="llm, function-calling, reasoning, ai, tools, chain-of-thought, cot",

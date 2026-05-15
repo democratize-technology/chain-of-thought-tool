@@ -41,10 +41,18 @@ This library provides that mechanism as a zero-dependency Python package with dr
 ```
 chain_of_thought/
   __init__.py       # Public API: TOOL_SPECS, HANDLERS, class exports, version
-  core.py           # All business logic, data models, async processors
-  validators.py     # Input validation (separated from business logic)
-  security.py       # Bedrock request validation (for async processor path)
+  core.py           # ChainOfThought, ThoughtStep, ServiceRegistry, handler factory
+  handlers.py       # Handler wrapper functions
+  bedrock.py        # AsyncChainOfThoughtProcessor, StopReasonHandler
+  concurrency.py    # ThreadAwareChainOfThought, RateLimiter
+  validators.py     # ParameterValidator - input validation
+  security.py       # RequestValidator - Bedrock request sanitization
+  auxiliary.py      # HypothesisGenerator, AssumptionMapper, ConfidenceCalibrator
 ```
+
+### Identity
+
+This library is named for Wei et al. 2022 but structurally descended from the MCP `sequential-thinking` server. See ADR-0010 for the dual-anchor model and ADR-0011 for identity analysis.
 
 ### 3.2 Core Data Model
 

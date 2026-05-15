@@ -1,7 +1,7 @@
 ---
 id: ADR-0004
 title: WeakValueDictionary Hybrid for Multi-Tenant Isolation
-status: proposed
+status: accepted
 date: 2026-05-14
 decision_makers:
   - Engineering
@@ -60,7 +60,7 @@ requirements:
       type: grep
       pattern: "WeakValueDictionary"
       paths:
-        - "chain_of_thought/core.py"
+        - "chain_of_thought/concurrency.py"
       expect: present
   - id: REQ-0004-2
     category: architecture
@@ -69,7 +69,7 @@ requirements:
       type: grep
       pattern: "release_conversation"
       paths:
-        - "chain_of_thought/core.py"
+        - "chain_of_thought/concurrency.py"
       expect: present
   - id: REQ-0004-3
     category: architecture
@@ -78,7 +78,7 @@ requirements:
       type: grep
       pattern: "_strong_refs"
       paths:
-        - "chain_of_thought/core.py"
+        - "chain_of_thought/concurrency.py"
       expect: present
   - id: REQ-0004-4
     category: architecture
@@ -87,7 +87,7 @@ requirements:
       type: grep
       pattern: "class.*RLock|_lock.*acquire"
       paths:
-        - "chain_of_thought/core.py"
+        - "chain_of_thought/concurrency.py"
       expect: present
   - id: REQ-0004-5
     category: architecture
@@ -96,7 +96,7 @@ requirements:
       type: grep_negative
       pattern: 'threading\.Timer|threading\.Thread|schedule'
       paths:
-        - "chain_of_thought/core.py"
+        - "chain_of_thought/concurrency.py"
       expect: absent
 <!-- /adr:requirements -->
 
@@ -233,8 +233,8 @@ tradeoffs:
 approval:
   required_approvers:
     - role: Engineering
-      approved: false
-      date: null
+      approved: true
+      date: "2026-05-14"
   review_schedule: annually
   next_review: null
 ```
@@ -244,6 +244,6 @@ approval:
 
 ## References
 
-- [ThreadAwareChainOfThought implementation](../../chain_of_thought/core.py) (lines 2163-2289)
+- [ThreadAwareChainOfThought implementation](../../chain_of_thought/concurrency.py)
 - [Python weakref.WeakValueDictionary documentation](https://docs.python.org/3/library/weakref.html#weakref.WeakValueDictionary)
 - ADR-0002: Zero External Dependency Philosophy

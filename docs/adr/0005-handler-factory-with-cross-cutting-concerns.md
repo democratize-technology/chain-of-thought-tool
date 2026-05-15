@@ -1,7 +1,7 @@
 ---
 id: ADR-0005
 title: Handler Factory with Cross-Cutting Concerns
-status: proposed
+status: accepted
 date: 2026-05-14
 decision_makers:
   - Engineering
@@ -210,8 +210,8 @@ tradeoffs:
 approval:
   required_approvers:
     - role: Engineering
-      approved: false
-      date: null
+      approved: true
+      date: "2026-05-14"
   review_schedule: annually
   next_review: null
 ```
@@ -221,6 +221,7 @@ approval:
 
 ## References
 
-- `chain_of_thought/core.py`: `create_generic_handler`, `TOOL_HANDLERS_CONFIG`, convenience wrappers (lines 44-136, 1769-1836)
+- `chain_of_thought/core.py`: `create_generic_handler`, `TOOL_HANDLERS_CONFIG`
+- `chain_of_thought/handlers.py`: Convenience wrapper functions
 - ADR-0002: Zero External Dependency Philosophy (no third-party DI frameworks)
 - ADR-0004: WeakValueDictionary Hybrid for Multi-Tenant Isolation (per-conversation handler injection)

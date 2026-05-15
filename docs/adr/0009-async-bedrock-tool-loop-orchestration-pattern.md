@@ -1,7 +1,7 @@
 ---
 id: ADR-0009
 title: Async Bedrock Tool Loop Orchestration Pattern
-status: proposed
+status: accepted
 date: 2026-05-14
 decision_makers:
   - Engineering
@@ -75,7 +75,7 @@ requirements:
       type: grep
       pattern: "RequestValidator"
       paths:
-        - "chain_of_thought/core.py"
+        - "chain_of_thought/bedrock.py"
       expect: present
   - id: REQ-0009-2
     category: architecture
@@ -84,7 +84,7 @@ requirements:
       type: grep
       pattern: "aws_call_timeout"
       paths:
-        - "chain_of_thought/core.py"
+        - "chain_of_thought/bedrock.py"
       expect: present
   - id: REQ-0009-3
     category: architecture
@@ -93,7 +93,7 @@ requirements:
       type: grep
       pattern: "tool_call_timeout"
       paths:
-        - "chain_of_thought/core.py"
+        - "chain_of_thought/bedrock.py"
       expect: present
   - id: REQ-0009-4
     category: architecture
@@ -102,7 +102,7 @@ requirements:
       type: grep
       pattern: "error.*tool_result|toolResult.*error"
       paths:
-        - "chain_of_thought/core.py"
+        - "chain_of_thought/bedrock.py"
       expect: present
   - id: REQ-0009-5
     category: architecture
@@ -111,7 +111,7 @@ requirements:
       type: grep
       pattern: "max_iterations|MAX_ITERATIONS"
       paths:
-        - "chain_of_thought/core.py"
+        - "chain_of_thought/bedrock.py"
       expect: present
   - id: REQ-0009-6
     category: architecture
@@ -120,7 +120,7 @@ requirements:
       type: grep
       pattern: 'ChainOfThought\(\)'
       paths:
-        - "chain_of_thought/core.py"
+        - "chain_of_thought/bedrock.py"
       expect: present
   - id: REQ-0009-7
     category: architecture
@@ -129,7 +129,7 @@ requirements:
       type: grep
       pattern: "class StopReasonHandler|ABC"
       paths:
-        - "chain_of_thought/core.py"
+        - "chain_of_thought/bedrock.py"
       expect: present
 <!-- /adr:requirements -->
 
@@ -269,8 +269,8 @@ tradeoffs:
 approval:
   required_approvers:
     - role: Engineering
-      approved: false
-      date: null
+      approved: true
+      date: "2026-05-14"
   review_schedule: annually
   next_review: null
 ```

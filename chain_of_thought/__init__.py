@@ -279,10 +279,8 @@ __all__ = [
     "AsyncChainOfThoughtProcessor",
     # Dependency injection
     "ServiceRegistry",
-    "get_service_registry",
     # Generic handler factory
     "create_generic_handler",
-    "TOOL_HANDLERS_CONFIG",
     # Handler functions
     "chain_of_thought_step_handler",
     "get_chain_summary_handler",

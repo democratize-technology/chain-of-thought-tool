@@ -1,7 +1,7 @@
 ---
 id: ADR-0002
 title: Zero External Dependency Philosophy
-status: proposed
+status: accepted
 date: 2026-05-14
 decision_makers:
   - Engineering
@@ -65,6 +65,9 @@ requirements:
         - "chain_of_thought/core.py"
         - "chain_of_thought/validators.py"
         - "chain_of_thought/security.py"
+        - "chain_of_thought/concurrency.py"
+        - "chain_of_thought/bedrock.py"
+        - "chain_of_thought/auxiliary.py"
       expect: present
   - id: REQ-0002-3
     category: architecture
@@ -200,8 +203,8 @@ tradeoffs:
 approval:
   required_approvers:
     - role: Engineering
-      approved: false
-      date: null
+      approved: true
+      date: "2026-05-14"
   review_schedule: annually
   next_review: null
 ```

@@ -2,6 +2,14 @@
 
 A lightweight Python package that provides structured Chain of Thought reasoning capabilities for LLMs through function calling.
 
+## What This Library Is (and Isn't)
+
+This library provides a **stateful reasoning tracker** for LLM function-calling APIs. It is named for Wei et al. 2022 "Chain of Thought Prompting Elicits Reasoning in Large Language Models" but is structurally descended from the MCP `sequential-thinking` server pattern — a tool-call-based step tracker where the LLM calls tools to record each reasoning step.
+
+**What it does:** Track multi-step reasoning with confidence scoring, evidence collection, assumption mapping, and contradiction detection.
+
+**What it doesn't do:** Perform LLM inference, prompt engineering, or chain-of-thought prompting. The LLM is the reasoner; this library is the notebook.
+
 ## Installation
 
 ```bash
@@ -179,6 +187,24 @@ Honest evaluation of what each tool category delivers:
 | **Auxiliary** | `generate_hypotheses`, `map_assumptions`, `calibrate_confidence` | Template/heuristic scaffolding | Produce structured output shapes using keyword matching and fixed templates. The LLM consuming these outputs performs the actual analysis. Zero-cost, zero-latency, synchronous. |
 
 **Key distinction**: Core tools manage stateful reasoning data. Auxiliary tools provide reasoning frameworks — structured containers that prompt more careful thinking. The LLM is the analyst; the library provides the scaffolding.
+
+### Topology and Revision Capabilities
+
+| Capability | Status | Notes |
+|------------|--------|-------|
+| Branching | Not supported | Steps are a flat sequence; no forking or merge. See ADR-0012. |
+| Revision | Implicit via step_number collision | Re-submitting an existing `step_number` replaces that step in place. See ADR-0013. |
+| Self-consistency sampling | Not supported | Could be implemented externally by running multiple chains and comparing summaries. See ADR-0014 for a recipe. |
+| Topology | Primarily linear | Optional DAG structure via `dependencies` and `contradicts` fields, but no cycle detection or traversal. See ADR-0015. |
+
+### Intellectual Genealogy
+
+The auxiliary reasoning tools trace to different traditions than Wei et al. 2022:
+- **Hypothesis Generation** (abductive reasoning): Peirce's framework for generating explanatory hypotheses
+- **Assumption Mapping** (critical thinking): Systematic identification of explicit and implicit assumptions
+- **Confidence Calibration** (forecasting): Tetlock's superforecasting research on overconfidence correction
+
+See ADR-0016 for full genealogy.
 
 ## Advanced Features
 
