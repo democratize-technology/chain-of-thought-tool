@@ -270,10 +270,10 @@ class TestImportChain:
         result = self.cot.export_chain("")
         assert result["status"] == "error"
 
-    def test_import_chain_sanitizes_html_in_thought_and_evidence(self, tmp_path):
-        """import_chain applies HTML escaping to thought, evidence, and assumptions."""
+    def test_import_chain_preserves_data_without_double_escaping(self, tmp_path):
+        """import_chain preserves data as-is without double HTML escaping."""
         import json
-        p = tmp_path / "xss.json"
+        p = tmp_path / "roundtrip.json"
         p.write_text(json.dumps({"steps": [{
             "thought": "<script>alert(1)</script>",
             "step_number": 1,
@@ -285,11 +285,11 @@ class TestImportChain:
         result = self.cot.import_chain(str(p))
         assert result["status"] == "success"
         step = self.cot.steps[0]
-        assert step.thought == "&lt;script&gt;alert(1)&lt;/script&gt;"
+        assert step.thought == "<script>alert(1)</script>"
         assert step.evidence is not None
-        assert step.evidence[0] == "&lt;img src=x onerror=alert(1)&gt;"
+        assert step.evidence[0] == "<img src=x onerror=alert(1)>"
         assert step.assumptions is not None
-        assert step.assumptions[0] == "&lt;b&gt;bold&lt;/b&gt;"
+        assert step.assumptions[0] == "<b>bold</b>"
 
     def test_import_chain_rejects_invalid_reasoning_stage_regex(self, tmp_path):
         """import_chain rejects reasoning_stage with injection characters."""

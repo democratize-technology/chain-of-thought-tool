@@ -3,6 +3,7 @@ include LICENSE
 include CHANGELOG.md
 include pyproject.toml
 recursive-include chain_of_thought *.py
+include chain_of_thought/py.typed
 recursive-exclude * __pycache__
 recursive-exclude * *.py[co]
 prune tests

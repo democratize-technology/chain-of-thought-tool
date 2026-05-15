@@ -47,10 +47,10 @@ Where third-party libraries would normally provide convenience (e.g., pydantic f
 requirements:
   - id: REQ-0002-1
     category: architecture
-    description: "install_requires must be empty in setup.py"
+    description: "dependencies must be empty in pyproject.toml (PEP 621 format)"
     verification:
       type: grep
-      pattern: "install_requires"
+      pattern: "dependencies = \\[\\]"
       paths:
         - "pyproject.toml"
       expect: present

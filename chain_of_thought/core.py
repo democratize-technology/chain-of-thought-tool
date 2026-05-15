@@ -9,7 +9,6 @@ import threading
 
 
 import logging
-import html
 import math
 import re
 from .validators import ParameterValidator
@@ -20,6 +19,7 @@ MAX_LIST_SIZE = 100
 MAX_STRING_LENGTH = 1000
 MAX_JSON_SIZE = 100000  # 100KB limit
 MAX_IMPORT_STEPS = 10_000  # DoS prevention: max steps allowed in import_chain
+DEFAULT_CONFIDENCE = 0.8  # Default confidence for new thought steps
 
 # Confidence and text constants are now in auxiliary.py
 # Re-exported below after ServiceRegistry definition
@@ -264,7 +264,7 @@ class ThoughtStep:
     step_number: int
     total_steps: int
     reasoning_stage: str = "Analysis"
-    confidence: float = 0.8
+    confidence: float = DEFAULT_CONFIDENCE
     next_step_needed: bool = True
     dependencies: Optional[List[int]] = None
     contradicts: Optional[List[int]] = None
@@ -303,7 +303,7 @@ class ChainOfThought:
         total_steps: int,
         next_step_needed: bool,
         reasoning_stage: str = "Analysis",
-        confidence: float = 0.8,
+        confidence: float = DEFAULT_CONFIDENCE,
         dependencies: Optional[List[int]] = None,
         contradicts: Optional[List[int]] = None,
         evidence: Optional[List[str]] = None,
@@ -364,7 +364,7 @@ class ChainOfThought:
         total_steps: int,
         next_step_needed: bool,
         reasoning_stage: str = "Analysis",
-        confidence: float = 0.8,
+        confidence: float = DEFAULT_CONFIDENCE,
         dependencies: Optional[List[int]] = None,
         contradicts: Optional[List[int]] = None,
         evidence: Optional[List[str]] = None,
@@ -420,7 +420,7 @@ class ChainOfThought:
             feedback_parts.append(f"Contradicts steps: {', '.join(map(str, step.contradicts))}. Consider reconciliation.")
         
         progress = step.step_number / step.total_steps
-        if progress >= 0.8 and step.next_step_needed:
+        if progress >= DEFAULT_CONFIDENCE and step.next_step_needed:
             feedback_parts.append("Approaching conclusion. Consider synthesis of insights.")
         
         return {
@@ -515,7 +515,7 @@ class ChainOfThought:
                     "total_evidence": list(all_evidence),
                     "total_assumptions": list(all_assumptions),
                     "contradiction_pairs": contradiction_pairs,
-                    "high_confidence_steps": [s.step_number for s in self.steps if s.confidence >= 0.8],
+                    "high_confidence_steps": [s.step_number for s in self.steps if s.confidence >= DEFAULT_CONFIDENCE],
                     "low_confidence_steps": [s.step_number for s in self.steps if s.confidence < 0.5]
                 },
                 "metadata": self.metadata
@@ -711,7 +711,7 @@ class ChainOfThought:
                     "message": f"Invalid step at index {idx}: 'timestamp' must be a string or null"
                 }
 
-            thought_val = html.escape(d["thought"].strip())
+            thought_val = d["thought"].strip()
 
             reasoning_stage_val_stripped = reasoning_stage_val.strip()
             if len(reasoning_stage_val_stripped) > 100:
@@ -729,17 +729,17 @@ class ChainOfThought:
                 }
 
             evidence_list = d.get("evidence") or []
-            evidence_sanitized = [html.escape(item.strip()) for item in evidence_list]
+            evidence_sanitized = [item.strip() for item in evidence_list]
 
             assumptions_list = d.get("assumptions") or []
-            assumptions_sanitized = [html.escape(item.strip()) for item in assumptions_list]
+            assumptions_sanitized = [item.strip() for item in assumptions_list]
 
             step = ThoughtStep(
                 thought=thought_val,
                 step_number=d["step_number"],
                 total_steps=d["total_steps"],
                 reasoning_stage=reasoning_stage_val_stripped,
-                confidence=d.get("confidence", 0.8),
+                confidence=d.get("confidence", DEFAULT_CONFIDENCE),
                 next_step_needed=d["next_step_needed"],
                 dependencies=d.get("dependencies") or [],
                 contradicts=d.get("contradicts") or [],
@@ -794,7 +794,7 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
             'credential', 'private', 'confidential', 'internal'
         }
 
-        # Define dangerous content patterns (word-boundary aware to avoid false positives)
+        # Substring-based dangerous content patterns for injection prevention
         DANGEROUS_PATTERNS = {
             '__import__', 'exec(', 'subprocess.', 'os.system', 'shell_exec',
             'DROP TABLE', '<script', 'javascript:', 'vbscript:', 'onload=',

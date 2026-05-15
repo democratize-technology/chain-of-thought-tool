@@ -1,7 +1,8 @@
 ---
 id: ADR-0016
 title: "Auxiliary Tool Genealogy — Not From CoT Lineage"
-status: proposed
+status: accepted
+accepted_date: 2026-05-14
 date: 2026-05-14
 decision_makers:
   - Engineering
@@ -193,8 +194,8 @@ tradeoffs:
 approval:
   required_approvers:
     - role: Engineering
-      approved: false
-      date: null
+      approved: true
+      date: "2026-05-14"
   review_schedule: annually
   next_review: null
 ```

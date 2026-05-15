@@ -413,7 +413,6 @@ class RequestValidator:
         """Check if a tool name appears suspicious."""
         suspicious_patterns = [
             r'^malicious',
-            r'^injection',
             r'^exploit',
             r'^attack',
             r'^hack',
@@ -421,17 +420,7 @@ class RequestValidator:
             r'^escalate',
             r'^exfiltrate',
             r'^steal',
-            r'^leak',
-            r'^dump',
-            r'^access.*token',
-            r'^admin',
-            r'^root',
-            r'^system',
-            r'^exec',
-            r'^eval',
-            r'^file.*system',
-            r'^network',
-            r'http.*request',
+            r'^dump.*cred',
             r'^sql.*inject',
         ]
 

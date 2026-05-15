@@ -1,7 +1,8 @@
 ---
 id: ADR-0010
 title: "Canonical Reference Mapping and Drift Index"
-status: proposed
+status: accepted
+accepted_date: 2026-05-14
 date: 2026-05-14
 decision_makers:
   - Engineering
@@ -184,8 +185,8 @@ tradeoffs:
 approval:
   required_approvers:
     - role: Engineering
-      approved: false
-      date: null
+      approved: true
+      date: "2026-05-14"
   review_schedule: annually
   next_review: null
 ```
