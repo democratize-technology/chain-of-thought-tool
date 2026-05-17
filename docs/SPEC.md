@@ -179,7 +179,7 @@ get_service_registry() -> ServiceRegistry
 
 # Handler factory
 create_generic_handler(tool_name, ...) -> Callable
-TOOL_HANDLERS_CONFIG: Dict
+TOOL_HANDLERS_CONFIG: Dict  (chain_of_thought.core — Tier 3 internal)
 
 # Individual handler functions
 chain_of_thought_step_handler(**kwargs) -> str

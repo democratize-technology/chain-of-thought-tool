@@ -24,7 +24,6 @@ from .core import (
     export_chain_handler,
     import_chain_handler,
     create_generic_handler,
-    TOOL_HANDLERS_CONFIG,
     ServiceRegistry,
     get_service_registry,
     ChainOfThought,
