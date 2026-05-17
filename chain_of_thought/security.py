@@ -12,11 +12,9 @@ from dataclasses import dataclass
 class SecurityConfig:
     """Security configuration for parameter validation."""
 
-    # Parameter whitelists
     allowed_top_level_params: Set[str] = None
     allowed_inference_params: Set[str] = None
 
-    # Parameter value validation ranges
     min_temperature: float = 0.0
     max_temperature: float = 1.0
     min_top_p: float = 0.0
@@ -73,10 +71,8 @@ class RequestValidator:
         if not isinstance(request, dict):
             raise SecurityValidationError("Request must be a dictionary")
 
-        # Create a copy to avoid modifying the original
         sanitized = {}
 
-        # Validate and sanitize each top-level parameter
         for param_name, param_value in request.items():
             if param_name not in self.config.allowed_top_level_params:
                 raise SecurityValidationError(
@@ -84,10 +80,8 @@ class RequestValidator:
                     f"Allowed parameters: {sorted(self.config.allowed_top_level_params)}"
                 )
 
-            # Apply specific validation based on parameter type
             sanitized[param_name] = self._validate_parameter(param_name, param_value)
 
-        # Ensure required parameters are present
         self._validate_required_parameters(sanitized)
 
         return sanitized
@@ -106,12 +100,10 @@ class RequestValidator:
         elif param_name == 'inferenceConfig':
             return self._validate_inference_config(param_value)
         elif param_name in ['guardrailConfig', 'additionalModelRequestFields']:
-            # AWS-specific parameters - pass through but ensure they're dictionaries
             if not isinstance(param_value, dict):
                 raise SecurityValidationError(f"{param_name} must be a dictionary")
             return param_value
         else:
-            # Unknown but allowed parameter - return as-is
             return param_value
 
     def _validate_model_id(self, model_id: str) -> str:
@@ -143,18 +135,15 @@ class RequestValidator:
             if not isinstance(message, dict):
                 raise SecurityValidationError(f"Message {i} must be a dictionary")
 
-            # Validate required 'role' field
             if 'role' not in message:
                 raise SecurityValidationError(f"Message {i} missing required 'role' field")
 
             if not isinstance(message['role'], str):
                 raise SecurityValidationError(f"Message {i} role must be a string")
 
-            # Validate required 'content' field
             if 'content' not in message:
                 raise SecurityValidationError(f"Message {i} missing required 'content' field")
 
-            # Sanitize content based on its type
             sanitized_content = self._validate_message_content(message['content'], i)
             message['content'] = sanitized_content
 
@@ -165,14 +154,12 @@ class RequestValidator:
     def _validate_message_content(self, content: Any, message_index: int) -> Any:
         """Validate message content."""
         if isinstance(content, str):
-            # Simple string content - check for injection patterns
             if self._contains_injection_patterns(content):
                 raise SecurityValidationError(
                     f"Message {message_index} content contains potential injection patterns"
                 )
             return content
         elif isinstance(content, list):
-            # Array of content objects
             sanitized_content = []
             for i, content_item in enumerate(content):
                 if not isinstance(content_item, dict):
@@ -180,13 +167,11 @@ class RequestValidator:
                         f"Message {message_index} content item {i} must be a dictionary"
                     )
 
-                # Validate content item structure
                 if not content_item:
                     raise SecurityValidationError(
                         f"Message {message_index} content item {i} cannot be empty"
                     )
 
-                # Check for malicious content types
                 for content_type, value in content_item.items():
                     if content_type == 'text' and isinstance(value, str):
                         if self._contains_injection_patterns(value):
@@ -194,7 +179,6 @@ class RequestValidator:
                                 f"Message {message_index} content item {i} contains potential injection"
                             )
                     elif content_type in ['toolUse', 'toolResult']:
-                        # Tool-related content - validate structure
                         if not isinstance(value, dict):
                             raise SecurityValidationError(
                                 f"Message {message_index} {content_type} must be a dictionary"
@@ -213,12 +197,10 @@ class RequestValidator:
             return None
 
         if isinstance(system, str):
-            # Simple string system prompt
             if self._contains_injection_patterns(system):
                 raise SecurityValidationError("System prompt contains potential injection patterns")
             return system
         elif isinstance(system, list):
-            # Array of system messages
             sanitized_system = []
             for i, system_item in enumerate(system):
                 if not isinstance(system_item, dict):
@@ -255,12 +237,10 @@ class RequestValidator:
         if not isinstance(tools, list):
             raise SecurityValidationError("toolConfig.tools must be a list")
 
-        # Validate each tool specification
         for i, tool in enumerate(tools):
             if not isinstance(tool, dict):
                 raise SecurityValidationError(f"Tool {i} must be a dictionary")
 
-            # Basic structure validation - more specific validation could be added
             if 'toolSpec' not in tool:
                 raise SecurityValidationError(f"Tool {i} missing required 'toolSpec' field")
 
@@ -274,7 +254,6 @@ class RequestValidator:
             if not isinstance(tool_spec['name'], str):
                 raise SecurityValidationError(f"Tool {i} name must be a string")
 
-            # Check for suspicious tool names
             if self._is_suspicious_tool_name(tool_spec['name']):
                 raise SecurityValidationError(
                     f"Tool {i} name '{tool_spec['name']}' appears suspicious"
@@ -299,7 +278,6 @@ class RequestValidator:
                     f"Allowed parameters: {sorted(self.config.allowed_inference_params)}"
                 )
 
-            # Validate specific inference parameters
             if param_name == 'temperature':
                 sanitized_config[param_name] = self._validate_temperature(param_value)
             elif param_name == 'topP':
@@ -364,7 +342,6 @@ class RequestValidator:
             if not isinstance(sequence, str):
                 raise SecurityValidationError(f"stopSequence {i} must be a string")
 
-            # Check for injection patterns in stop sequences
             if self._contains_injection_patterns(sequence):
                 raise SecurityValidationError(
                     f"stopSequence {i} '{sequence}' contains potential injection patterns"
@@ -376,7 +353,7 @@ class RequestValidator:
 
     def _validate_required_parameters(self, sanitized_request: Dict[str, Any]) -> None:
         """Validate that required parameters are present."""
-        required_params = ['messages', 'modelId']  # Use list for deterministic order
+        required_params = ['messages', 'modelId']
 
         for param in required_params:
             if param not in sanitized_request:
@@ -387,7 +364,6 @@ class RequestValidator:
         if not isinstance(text, str):
             return False
 
-        # Define suspicious patterns
         injection_patterns = [
             r'<script[^>]*>.*?</script>',  # Script tags
             r'javascript:',                # JavaScript protocol
@@ -402,7 +378,6 @@ class RequestValidator:
             r'from\s+\w+\s+import',       # From import statements
         ]
 
-        # Check each pattern
         for pattern in injection_patterns:
             if re.search(pattern, text, re.IGNORECASE | re.DOTALL):
                 return True
@@ -431,5 +406,4 @@ class RequestValidator:
         return False
 
 
-# Default validator instance
 default_validator = RequestValidator()

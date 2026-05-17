@@ -9,7 +9,6 @@ import time
 import weakref
 
 
-# Rate limiter configuration
 DEFAULT_MAX_REQUESTS_PER_MINUTE = 60
 DEFAULT_MAX_REQUESTS_PER_HOUR = 1000
 DEFAULT_MAX_BURST_SIZE = 10
@@ -40,24 +39,21 @@ class RateLimiter:
         self.max_requests_per_hour = max_requests_per_hour
         self.max_burst_size = max_burst_size
 
-        # Track request counts and timestamps per client
-        self._request_counts: Dict[str, int] = {}  # Current burst counts
-        self._request_timestamps: Dict[str, List[float]] = {}  # Timestamps for sliding windows
-        self._lock = threading.RLock()  # Thread-safe access
+        self._request_counts: Dict[str, int] = {}
+        self._request_timestamps: Dict[str, List[float]] = {}
+        self._lock = threading.RLock()
 
     def _cleanup_old_timestamps(self, client_id: str, current_time: float) -> None:
         """Remove timestamps older than 1 hour from tracking."""
         if client_id not in self._request_timestamps:
             return
 
-        # Remove timestamps older than 1 hour
         one_hour_ago = current_time - 3600.0
         timestamps = self._request_timestamps[client_id]
         self._request_timestamps[client_id] = [
             ts for ts in timestamps if ts > one_hour_ago
         ]
 
-        # Clean up empty timestamp lists
         if not self._request_timestamps[client_id]:
             del self._request_timestamps[client_id]
 
@@ -90,28 +86,22 @@ class RateLimiter:
         current_time = time.time()
 
         with self._lock:
-            # Clean up old timestamps
             self._cleanup_old_timestamps(client_id, current_time)
 
-            # Check burst limit (immediate consecutive requests)
             current_burst = self._request_counts.get(client_id, 0)
             if current_burst >= self.max_burst_size:
                 return False
 
-            # Check per-minute limit
             minute_count = self._get_minute_count(client_id, current_time)
             if minute_count >= self.max_requests_per_minute:
                 return False
 
-            # Check per-hour limit
             hour_count = self._get_hour_count(client_id, current_time)
             if hour_count >= self.max_requests_per_hour:
                 return False
 
-            # Request is allowed - update tracking
             self._request_counts[client_id] = current_burst + 1
 
-            # Add timestamp for sliding window tracking
             if client_id not in self._request_timestamps:
                 self._request_timestamps[client_id] = []
             self._request_timestamps[client_id].append(current_time)
@@ -131,12 +121,10 @@ class RateLimiter:
         current_time = time.time()
 
         with self._lock:
-            # Check burst limit
             current_burst = self._request_counts.get(client_id, 0)
             if current_burst >= self.max_burst_size:
-                return 1  # Very short delay for burst limit
+                return 1
 
-            # Check minute limit
             minute_count = self._get_minute_count(client_id, current_time)
             if minute_count >= self.max_requests_per_minute:
                 if client_id in self._request_timestamps and self._request_timestamps[client_id]:
@@ -144,15 +132,14 @@ class RateLimiter:
                     retry_after = int(60 - (current_time - oldest_timestamp)) + 1
                     return max(retry_after, 1)
 
-            # Check hour limit
             hour_count = self._get_hour_count(client_id, current_time)
             if hour_count >= self.max_requests_per_hour:
                 if client_id in self._request_timestamps and self._request_timestamps[client_id]:
                     oldest_timestamp = min(self._request_timestamps[client_id])
                     retry_after = int(3600 - (current_time - oldest_timestamp)) + 1
-                    return max(retry_after, 60)  # At least 1 minute
+                    return max(retry_after, 60)
 
-            return None  # Not rate limited
+            return None
 
     def reset_client(self, client_id: str = "default") -> None:
         """Reset rate limiting tracking for a specific client."""
@@ -174,7 +161,6 @@ class RateLimiter:
             }
 
 
-# Global rate limiter instance
 _global_rate_limiter: Optional[RateLimiter] = None
 _rate_limiter_lock = threading.Lock()
 
@@ -185,7 +171,7 @@ def get_global_rate_limiter() -> RateLimiter:
 
     if _global_rate_limiter is None:
         with _rate_limiter_lock:
-            if _global_rate_limiter is None:  # Double-check
+            if _global_rate_limiter is None:
                 _global_rate_limiter = RateLimiter()
 
     return _global_rate_limiter
@@ -202,37 +188,30 @@ def set_global_rate_limiter(limiter: RateLimiter) -> None:
 class ThreadAwareChainOfThought:
     """Thread-safe version for production use with dependency injection support."""
 
-    # Hybrid approach: WeakValueDictionary for automatic cleanup + strong refs for active conversations
     _instances: weakref.WeakValueDictionary[str, Any] = weakref.WeakValueDictionary()
-    _strong_refs: Dict[str, Any] = {}  # Keep strong refs to prevent premature GC
+    _strong_refs: Dict[str, Any] = {}
     _lock = threading.RLock()
 
     @classmethod
     def for_conversation(cls, conversation_id: str, registry: Optional[Any] = None):
         """Get or create a ChainOfThought instance for a conversation."""
-        # Deferred import to avoid circular dependency on core.py
         from .core import ChainOfThought, get_service_registry
 
         with cls._lock:
-            # Try to get existing instance from strong references first
             if conversation_id in cls._strong_refs:
                 return cls._strong_refs[conversation_id]
 
-            # Try to get from weak references (may be None if GC'd)
             try:
                 weak_instance = cls._instances[conversation_id]
                 if weak_instance is not None:
-                    # Found in weak refs, promote to strong refs
                     cls._strong_refs[conversation_id] = weak_instance
                     return weak_instance
             except KeyError:
-                pass  # Instance doesn't exist, create new one
+                pass
 
-            # Create new instance
             service_registry = registry or get_service_registry()
             new_instance = ChainOfThought()
 
-            # Store in both weak and strong references
             cls._instances[conversation_id] = new_instance
             cls._strong_refs[conversation_id] = new_instance
             return new_instance
@@ -292,7 +271,6 @@ class ThreadAwareChainOfThought:
             return cls._strong_refs.pop(conversation_id, None) is not None
 
     def __init__(self, conversation_id: str, registry: Optional[Any] = None):
-        # Deferred import to avoid circular dependency on core.py
         from .core import get_service_registry
 
         self.conversation_id = conversation_id
@@ -305,8 +283,6 @@ class ThreadAwareChainOfThought:
         return TOOL_SPECS
 
     def get_handlers(self):
-        """Get handlers bound to this instance using dependency injection."""
-        # Deferred imports to avoid circular dependency on core.py
         from .core import (
             ServiceRegistry as _ServiceRegistry,
             _safe_json_dumps,
@@ -320,20 +296,16 @@ class ThreadAwareChainOfThought:
             create_calibrate_confidence_handler,
         )
 
-        # Create a service registry with this instance's ChainOfThought
         instance_registry = _ServiceRegistry()
 
-        # Copy all factories from the main registry
         for service_name in ['hypothesis_generator', 'assumption_mapper', 'confidence_calibrator']:
             if self.registry.has_service(service_name):
                 instance_registry.register_factory(service_name, lambda name=service_name: self.registry.get_service(name))
 
-        # Register this instance's ChainOfThought
         instance_registry.register_service('chain_of_thought', self.chain)
 
         chain = self.chain
 
-        # Create handlers using the instance registry
         handlers = {
             "chain_of_thought_step": create_chain_of_thought_step_handler(instance_registry),
             "get_chain_summary": create_get_chain_summary_handler(instance_registry),

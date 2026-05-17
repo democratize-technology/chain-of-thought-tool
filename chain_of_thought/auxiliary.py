@@ -19,11 +19,9 @@ from datetime import datetime
 import math
 
 
-# Calibration thresholds
 HIGH_CONFIDENCE_THRESHOLD = 0.15
 MEDIUM_CONFIDENCE_THRESHOLD = 0.05
 
-# Text processing limits
 MAX_PREDICTION_WORDS = 20
 
 
@@ -65,20 +63,16 @@ class HypothesisGenerator:
         Returns analysis and ranked hypotheses.
         """
 
-        # Clear previous hypotheses for new observation
         self.hypotheses.clear()
 
-        # Generate different types of hypotheses
         hypothesis_types = ["scientific", "intuitive", "contrarian", "systematic"]
 
-        # Ensure we don't generate more than requested
         types_to_generate = hypothesis_types[:hypothesis_count]
 
         for i, hypothesis_type in enumerate(types_to_generate):
             hypothesis = self._generate_hypothesis_by_type(observation, hypothesis_type, i + 1)
             self.hypotheses.append(hypothesis)
 
-        # Rank by testability
         ranked_hypotheses = sorted(self.hypotheses, key=lambda h: h.testability_score, reverse=True)
 
         self.metadata["generation_count"] += 1
@@ -193,13 +187,11 @@ class AssumptionMapper:
         """Extract explicitly stated assumptions from the statement."""
         assumptions = []
 
-        # Look for explicit assumption indicators
         assumption_indicators = [
             "assuming", "given that", "if we assume", "provided that",
             "taking for granted", "presupposing", "based on the premise"
         ]
 
-        # Simulate finding explicit assumptions based on linguistic patterns
         if any(indicator in statement.lower() for indicator in assumption_indicators):
             assumptions.append(Assumption(
                 statement=f"Explicit assumption found in: '{statement[:50]}...'",
@@ -210,7 +202,6 @@ class AssumptionMapper:
                 validation_methods=["Textual analysis", "Logical parsing"]
             ))
 
-        # Look for conditional statements that reveal assumptions
         if any(word in statement.lower() for word in ["if", "when", "unless", "provided"]):
             assumptions.append(Assumption(
                 statement=f"Conditional assumption in statement about prerequisites",
@@ -227,7 +218,6 @@ class AssumptionMapper:
         """Identify unstated assumptions underlying the statement."""
         assumptions = []
 
-        # Domain-specific implicit assumptions
         if "market" in statement.lower() or "business" in statement.lower():
             assumptions.append(Assumption(
                 statement="Market behavior follows rational economic principles",
@@ -238,7 +228,6 @@ class AssumptionMapper:
                 validation_methods=["Market research", "Economic data analysis"]
             ))
 
-        # Causal implicit assumptions
         if "because" in statement.lower() or "leads to" in statement.lower():
             assumptions.append(Assumption(
                 statement="Causal relationships are direct and measurable",
@@ -249,7 +238,6 @@ class AssumptionMapper:
                 validation_methods=["Causal analysis", "Controlled experiments"]
             ))
 
-        # Temporal implicit assumptions
         if any(word in statement.lower() for word in ["will", "future", "predict", "forecast"]):
             assumptions.append(Assumption(
                 statement="Future conditions will remain similar to current conditions",
@@ -260,7 +248,6 @@ class AssumptionMapper:
                 validation_methods=["Trend analysis", "Scenario planning"]
             ))
 
-        # Scale/scope implicit assumptions
         if any(word in statement.lower() for word in ["all", "every", "always", "never"]):
             assumptions.append(Assumption(
                 statement="Universal quantifiers apply without exceptions",
@@ -278,17 +265,14 @@ class AssumptionMapper:
         critical_assumptions = []
 
         for assumption in assumptions:
-            # Mark as critical if it has high confidence and affects core logic
             if assumption.confidence >= 0.7:
                 assumption.is_critical = True
                 critical_assumptions.append(assumption)
 
-            # Mark causal assumptions as critical
             if "causal" in assumption.reasoning.lower():
                 assumption.is_critical = True
                 critical_assumptions.append(assumption)
 
-            # Mark universal assumptions as critical due to fragility
             if "universal" in assumption.reasoning.lower() or "absolute" in assumption.reasoning.lower():
                 assumption.is_critical = True
                 critical_assumptions.append(assumption)
@@ -310,19 +294,14 @@ class AssumptionMapper:
         Returns analysis with categorized assumptions and criticality assessment.
         """
 
-        # Clear previous assumptions for new statement
         self.assumptions.clear()
 
-        # Extract different types of assumptions
         explicit_assumptions = self.extract_explicit_assumptions(statement)
         implicit_assumptions = self.identify_implicit_assumptions(statement)
 
-        # Apply depth-specific analysis
         if depth == "deep":
-            # In deep mode, generate additional implicit assumptions
             additional_implicit = []
 
-            # Look for data quality assumptions
             if "data" in statement.lower() or "research" in statement.lower():
                 additional_implicit.append(Assumption(
                     statement="Data sources are accurate and representative",
@@ -333,7 +312,6 @@ class AssumptionMapper:
                     validation_methods=["Data validation", "Source verification"]
                 ))
 
-            # Look for stakeholder assumptions
             if "people" in statement.lower() or "users" in statement.lower():
                 additional_implicit.append(Assumption(
                     statement="Human behavior is predictable and consistent",
@@ -346,14 +324,11 @@ class AssumptionMapper:
 
             implicit_assumptions.extend(additional_implicit)
 
-        # Combine all assumptions
         all_assumptions = explicit_assumptions + implicit_assumptions
         self.assumptions = all_assumptions
 
-        # Identify critical assumptions
         critical_assumptions = self.identify_critical_assumptions(all_assumptions)
 
-        # Build dependency relationships
         dependency_graph = self._build_dependency_graph(all_assumptions)
 
         self.metadata["mapping_count"] += 1
@@ -411,7 +386,6 @@ class AssumptionMapper:
             assumption_id = f"assumption_{i}"
             graph[assumption_id] = []
 
-            # Simple heuristic: critical assumptions depend on less critical ones
             for j, other_assumption in enumerate(assumptions):
                 if i != j and assumption.is_critical and not other_assumption.is_critical:
                     graph[assumption_id].append(f"assumption_{j}")
@@ -440,7 +414,6 @@ class ConfidenceAssessment:
         if self.uncertainty_factors is None:
             self.uncertainty_factors = []
 
-        # Ensure confidence values are in valid range
         self.original_confidence = max(0.0, min(1.0, self.original_confidence))
         self.calibrated_confidence = max(0.0, min(1.0, self.calibrated_confidence))
 
@@ -459,37 +432,31 @@ class ConfidenceCalibrator:
         indicators = []
         overconfidence_score = 0.0
 
-        # Very high confidence (>0.9) is often overconfident
         if confidence > 0.9:
             indicators.append("Very high initial confidence (>90%)")
             overconfidence_score += 0.3
 
-        # Absolute language suggests overconfidence
         absolute_words = ["always", "never", "definitely", "certainly", "absolutely", "guaranteed", "impossible"]
         if any(word in prediction.lower() for word in absolute_words):
             indicators.append("Contains absolute language suggesting overconfidence")
             overconfidence_score += 0.2
 
-        # Future predictions are inherently uncertain
         future_words = ["will", "going to", "by 2030", "by 2025", "next year", "soon"]
         if any(word in prediction.lower() for word in future_words):
             indicators.append("Future prediction with inherent uncertainty")
             overconfidence_score += 0.15
 
-        # Complex predictions (multiple factors) often overconfident
         complexity_indicators = ["and", "because", "due to", "multiple", "various", "complex"]
         complexity_count = sum(1 for word in complexity_indicators if word in prediction.lower())
         if complexity_count >= 2:
             indicators.append("Complex prediction with multiple factors")
             overconfidence_score += 0.1
 
-        # Technology predictions are notoriously overconfident
         tech_words = ["ai", "artificial intelligence", "agi", "technology", "innovation", "breakthrough"]
         if any(word in prediction.lower() for word in tech_words):
             indicators.append("Technology prediction (historically overconfident domain)")
             overconfidence_score += 0.1
 
-        # Statistical/quantitative claims without evidence
         if any(char.isdigit() for char in prediction) and confidence > 0.8:
             indicators.append("Quantitative claim with high confidence but no cited evidence")
             overconfidence_score += 0.15
@@ -503,21 +470,16 @@ class ConfidenceCalibrator:
     def calculate_uncertainty_bands(self, confidence: float) -> tuple:
         """Calculate realistic uncertainty bands around the confidence estimate."""
 
-        # Base uncertainty depends on confidence level
         if confidence > 0.95:
-            # Very high confidence - add significant uncertainty
             uncertainty = 0.15
         elif confidence > 0.8:
-            # High confidence - moderate uncertainty
             uncertainty = 0.1
         elif confidence > 0.6:
-            # Medium confidence - some uncertainty
             uncertainty = 0.08
         else:
-            # Low confidence - less additional uncertainty needed
             uncertainty = 0.05
 
-        # Calculate bounds
+
         lower_bound = max(0.0, confidence - uncertainty)
         upper_bound = min(1.0, confidence + uncertainty)
 
@@ -526,14 +488,10 @@ class ConfidenceCalibrator:
     def apply_calibration_adjustment(self, original_confidence: float, overconfidence_score: float) -> float:
         """Apply calibration adjustment based on overconfidence indicators."""
 
-        # Calculate adjustment factor based on overconfidence score
-        # Higher overconfidence score = larger downward adjustment
-        adjustment_factor = overconfidence_score * 0.3  # Max 30% reduction
+        adjustment_factor = overconfidence_score * 0.3
 
-        # Apply adjustment
         adjusted_confidence = original_confidence * (1 - adjustment_factor)
 
-        # Ensure we don't go below a reasonable minimum
         adjusted_confidence = max(0.1, adjusted_confidence)
 
         return round(adjusted_confidence, 3)
@@ -542,19 +500,15 @@ class ConfidenceCalibrator:
         """Identify uncertainty factors based on prediction and context."""
         uncertainty_factors = []
 
-        # Temporal uncertainty
         if "future" in prediction.lower() or any(word in prediction.lower() for word in ["will", "going to", "by 20"]):
             uncertainty_factors.append("Temporal uncertainty - future events")
 
-        # Technology uncertainty
         if "technology" in prediction.lower() or "ai" in prediction.lower():
             uncertainty_factors.append("Technology uncertainty - rapid change domain")
 
-        # Complexity uncertainty
         if len(prediction.split()) > MAX_PREDICTION_WORDS:
             uncertainty_factors.append("Complexity uncertainty - multiple interconnected factors")
 
-        # Data uncertainty
         if context and "limited data" in context.lower():
             uncertainty_factors.append("Data uncertainty - limited information available")
 
@@ -655,7 +609,6 @@ class ConfidenceCalibrator:
 
         Returns calibrated confidence with uncertainty bands and reasoning.
         """
-        # Validate inputs
         if not isinstance(initial_confidence, (int, float)) or isinstance(initial_confidence, bool):
             raise ValueError("initial_confidence must be a number")
         if isinstance(initial_confidence, float) and (math.isnan(initial_confidence) or math.isinf(initial_confidence)):
@@ -663,28 +616,22 @@ class ConfidenceCalibrator:
         if initial_confidence < 0.0 or initial_confidence > 1.0:
             raise ValueError("initial_confidence must be between 0.0 and 1.0")
 
-        # Analyze overconfidence patterns
         overconfidence_analysis = self.detect_overconfidence_patterns(prediction, initial_confidence)
 
-        # Apply calibration adjustment
         calibrated_confidence = self.apply_calibration_adjustment(
             initial_confidence,
             overconfidence_analysis["overconfidence_score"]
         )
 
-        # Calculate uncertainty bands
         uncertainty_band = self.calculate_uncertainty_bands(calibrated_confidence)
 
-        # Identify uncertainty factors
         uncertainty_factors = self._identify_uncertainty_factors(prediction, context)
 
-        # Generate reasoning
         adjustment_magnitude = abs(calibrated_confidence - initial_confidence)
         reasoning = self._generate_calibration_reasoning(
             adjustment_magnitude, overconfidence_analysis["risk_level"]
         )
 
-        # Create assessment and update metadata
         assessment = self._create_confidence_assessment(
             initial_confidence, calibrated_confidence, uncertainty_band,
             overconfidence_analysis, reasoning, uncertainty_factors
@@ -694,7 +641,6 @@ class ConfidenceCalibrator:
         self.metadata["calibration_count"] += 1
         self.metadata["last_calibrated"] = datetime.now().isoformat()
 
-        # Build and return response
         return self._build_calibration_response(
             prediction, initial_confidence, calibrated_confidence,
             uncertainty_band, overconfidence_analysis, uncertainty_factors, reasoning

@@ -13,19 +13,14 @@ import math
 import re
 from .validators import ParameterValidator
 
-# Sanitization and Security Limits
 MAX_RECURSION_DEPTH = 50
 MAX_LIST_SIZE = 100
 MAX_STRING_LENGTH = 1000
-MAX_JSON_SIZE = 100000  # 100KB limit
-MAX_IMPORT_STEPS = 10_000  # DoS prevention: max steps allowed in import_chain
-DEFAULT_CONFIDENCE = 0.8  # Default confidence for new thought steps
-
-# Confidence and text constants are now in auxiliary.py
-# Re-exported below after ServiceRegistry definition
+MAX_JSON_SIZE = 100000
+MAX_IMPORT_STEPS = 10_000
+DEFAULT_CONFIDENCE = 0.8
 
 
-# Configuration for tool handlers that the generic factory can create
 TOOL_HANDLERS_CONFIG = {
     'chain_of_thought_step': {
         'service_name': 'chain_of_thought',
@@ -85,7 +80,6 @@ def create_generic_handler(
     service_name = config['service_name']
     service_method = config['service_method']
 
-    # Use provided rate limiter or global one (deferred import to avoid circular dependency)
     if rate_limiter is not None:
         limiter = rate_limiter
     else:
@@ -93,9 +87,7 @@ def create_generic_handler(
         limiter = _get_rate_limiter()
 
     def handler(**kwargs) -> str:
-        """Generic handler function with rate limiting and service injection."""
 
-        # Check rate limit first
         if not limiter.check_rate_limit(client_id):
             retry_after = limiter.get_retry_after(client_id)
             return _safe_json_dumps({
@@ -109,7 +101,6 @@ def create_generic_handler(
             service_registry = registry or get_service_registry()
             service = service_registry.get_service(service_name)
 
-            # Call the service method with the provided kwargs
             method = getattr(service, service_method)
             result = method(**kwargs)
 
@@ -170,7 +161,6 @@ class ServiceRegistry:
         """
         with self._lock:
             self._factories[name] = factory
-            # Remove any existing instance to force recreation
             self._services.pop(name, None)
 
     def get_service(self, name: str) -> Any:
@@ -187,16 +177,13 @@ class ServiceRegistry:
             KeyError: If service is not registered
         """
         with self._lock:
-            # Return existing instance if available
             if name in self._services:
                 return self._services[name]
 
-            # Create new instance using factory
             if name in self._factories:
                 try:
                     service = self._factories[name]()
 
-                    # Validate that factory returned a valid service
                     if service is None:
                         raise ServiceCreationError(
                             f"Failed to create service '{name}': factory returned None"
@@ -206,7 +193,6 @@ class ServiceRegistry:
                     return service
 
                 except Exception as e:
-                    # Log the error for debugging
                     logging.error(f"Failed to create service '{name}': {type(e).__name__}: {str(e)}")
                     raise ServiceCreationError(
                         f"Failed to create service '{name}': {str(e)}"
@@ -234,7 +220,6 @@ class ServiceRegistry:
         self._register_default_factories()
 
 
-# Global service registry
 _default_registry = ServiceRegistry()
 
 
@@ -242,8 +227,6 @@ def get_service_registry() -> ServiceRegistry:
     return _default_registry
 
 
-# Re-export auxiliary classes for backward compatibility.
-# Placed after ServiceRegistry to avoid circular imports at module load time.
 from .auxiliary import (  # noqa: E402
     Hypothesis,
     HypothesisGenerator,
@@ -342,12 +325,9 @@ class ChainOfThought:
         """Handle revision of an existing step."""
         for i, step in enumerate(self.steps):
             if step.step_number == step_number:
-                # This is a revision
                 self.steps[i] = self._create_thought_step(validated_params)
                 self._update_metadata()
                 return self._generate_feedback(self.steps[i], is_revision=True)
-        # If we reach here, the step number wasn't found - this shouldn't happen in normal operation
-        # But can occur in race conditions during concurrent access
         return None
 
     def _handle_new_step(self, validated_params: Dict[str, Any]) -> Dict[str, Any]:
@@ -382,14 +362,12 @@ class ChainOfThought:
                 evidence, assumptions
             )
 
-            # Check if this is a revision of an existing step
             revision_result = self._handle_step_revision(
                 validated_params["step_number"], validated_params
             )
             if revision_result:
                 return revision_result
 
-            # Handle new step
             return self._handle_new_step(validated_params)
     
     def _generate_feedback(self, step: ThoughtStep, is_revision: bool) -> Dict[str, Any]:
@@ -450,7 +428,6 @@ class ChainOfThought:
                     "message": "No thought steps have been recorded yet."
                 }
 
-            # Organize by stage
             stages = {}
             for step in self.steps:
                 if step.reasoning_stage not in stages:
@@ -473,12 +450,10 @@ class ChainOfThought:
                 avg_confidence = sum(s.confidence for s in steps_in_stage) / len(steps_in_stage)
                 confidence_by_stage[stage] = round(avg_confidence, 3)
 
-            # Build content_synthesis: full thought text grouped by stage
             content_synthesis: Dict[str, List[str]] = {}
             for stage, steps_in_stage in stages.items():
                 content_synthesis[stage] = [s.thought for s in steps_in_stage]
 
-            # Build completion_status against the 5 canonical reasoning stages
             required_stages = [
                 "Problem Definition", "Research", "Analysis", "Synthesis", "Conclusion"
             ]
@@ -764,7 +739,6 @@ class ChainOfThought:
 
 
 
-# Security helper function for safe JSON serialization
 def _safe_json_dumps(data: Any, indent: int = 2) -> str:
     """
     Safely serialize data to JSON with strict security controls.
@@ -783,10 +757,8 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
         Safe JSON string with no sensitive data exposed
     """
     try:
-        # Define whitelist of safe types (defense-in-depth)
         SAFE_TYPES = (dict, list, str, int, float, bool, type(None))
 
-        # Define sensitive keys to filter (case-insensitive)
         SENSITIVE_KEYS = {
             'password', 'passwd', 'pwd', 'secret', 'token', 'key', 'apikey', 'api_key',
             'auth', 'authorization', 'auth_token', 'session', 'session_id',
@@ -794,7 +766,6 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
             'credential', 'private', 'confidential', 'internal'
         }
 
-        # Substring-based dangerous content patterns for injection prevention
         DANGEROUS_PATTERNS = {
             '__import__', 'exec(', 'subprocess.', 'os.system', 'shell_exec',
             'DROP TABLE', '<script', 'javascript:', 'vbscript:', 'onload=',
@@ -802,11 +773,6 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
         }
 
         def sanitize(obj, depth=0):
-            """
-            Recursively sanitize object for safe serialization.
-            Uses whitelist approach with depth limiting to prevent recursion attacks.
-            """
-            # Prevent deep recursion attacks
             if depth > MAX_RECURSION_DEPTH:
                 return {"status": "error", "message": "Data too deep"}
 
@@ -814,21 +780,17 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
                 if isinstance(obj, dict):
                     sanitized_dict = {}
                     for key, value in obj.items():
-                        # Filter sensitive keys (case-insensitive)
                         key_lower = str(key).lower()
                         is_sensitive = any(sensitive in key_lower for sensitive in SENSITIVE_KEYS)
 
                         if is_sensitive:
-                            # Replace sensitive values with placeholder
                             sanitized_dict[key] = "[REDACTED]"
                         else:
-                            # Recursively sanitize values
                             sanitized_dict[key] = sanitize(value, depth + 1)
 
                     return sanitized_dict
 
                 elif isinstance(obj, list):
-                    # Sanitize list elements recursively
                     try:
                         if len(obj) > MAX_LIST_SIZE:
                             logging.warning(f"_safe_json_dumps: list truncated from {len(obj)} to {MAX_LIST_SIZE}")
@@ -837,19 +799,17 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
                         return [{"status": "error", "message": "List processing failed"}]
 
                 elif isinstance(obj, str):
-                    # Check for dangerous content in strings
                     content_lower = obj.lower()
                     for pattern in DANGEROUS_PATTERNS:
                         if pattern.lower() in content_lower:
                             return "[FILTERED_CONTENT]"
-                    return obj[:MAX_STRING_LENGTH]  # Limit string length
+                    return obj[:MAX_STRING_LENGTH]
 
                 elif isinstance(obj, (int, float)):
-                    # Check for dangerous numeric values
                     if isinstance(obj, float):
-                        if obj != obj:  # NaN
+                        if obj != obj:
                             return 0.0
-                        if obj in (float('inf'), float('-inf')):  # Infinity
+                        if obj in (float('inf'), float('-inf')):
                             return 0.0
                     return obj
 
@@ -857,15 +817,11 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
                     return obj
 
             else:
-                # Convert unknown objects to safe string representation
-                # NEVER expose internal structure or methods
                 obj_type = type(obj).__name__
                 return f"[Object: {obj_type}]"
 
-        # Apply sanitization
         sanitized_data = sanitize(data)
 
-        # Final security check on result size
         json_string = json.dumps(
             sanitized_data,
             indent=indent,
@@ -874,8 +830,7 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
             sort_keys=True
         )
 
-        # Prevent DoS through huge JSON output
-        if len(json_string) > MAX_JSON_SIZE:  # Prevent DoS through huge JSON output
+        if len(json_string) > MAX_JSON_SIZE:
             return json.dumps({
                 "status": "error",
                 "message": "Data processing failed"
@@ -884,25 +839,19 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
         return json_string
 
     except Exception:
-        # NEVER expose internal error details - security principle
-        # No information disclosure about internal errors, types, or stack traces
         return json.dumps({
             "status": "error",
             "message": "Data processing failed"
         })
 
 
-# Initialize default service factories now that all classes are defined
 _default_registry.initialize_default_services()
 
-# Global instance for simple usage - now using the service registry
 _chain_processor = _default_registry.get_service('chain_of_thought')
 
-# Import security module components
 from .security import RequestValidator, SecurityValidationError, default_validator
 
 
-# Re-export concurrency classes from concurrency.py for backward compatibility.
 from .concurrency import (  # noqa: E402
     RateLimiter,
     get_global_rate_limiter,
@@ -913,7 +862,6 @@ from .concurrency import (  # noqa: E402
     DEFAULT_MAX_BURST_SIZE,
 )
 
-# Re-export handler functions from handlers.py for backward compatibility.
 from .handlers import (  # noqa: E402
     chain_of_thought_step_handler,
     get_chain_summary_handler,
@@ -932,7 +880,6 @@ from .handlers import (  # noqa: E402
 )
 
 
-# Re-export Bedrock integration classes from bedrock.py for backward compatibility.
 from .bedrock import (  # noqa: E402
     StopReasonHandler,
     BedrockStopReasonHandler,

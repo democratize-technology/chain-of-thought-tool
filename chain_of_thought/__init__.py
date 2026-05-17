@@ -6,13 +6,10 @@ A lightweight Python package that provides structured Chain of Thought reasoning
 Usage:
     from chain_of_thought import TOOL_SPECS, HANDLERS
     
-    # Add to your LLM tools
     tools = [
         *TOOL_SPECS,
-        # ... other tools
     ]
-    
-    # Handle tool calls
+
     if tool_name in HANDLERS:
         result = HANDLERS[tool_name](**tool_args)
 """
@@ -26,13 +23,10 @@ from .core import (
     calibrate_confidence_handler,
     export_chain_handler,
     import_chain_handler,
-    # Generic handler factory
     create_generic_handler,
     TOOL_HANDLERS_CONFIG,
-    # Service registry
     ServiceRegistry,
     get_service_registry,
-    # Core classes
     ChainOfThought,
     ThoughtStep as ThoughtStep,
     ThreadAwareChainOfThought,
@@ -42,7 +36,6 @@ from .core import (
 )
 from .validators import ParameterValidator
 
-# Tool specifications compatible with Converse API format
 TOOL_SPECS = [
     {
         "toolSpec": {
@@ -254,7 +247,6 @@ TOOL_SPECS = [
     }
 ]
 
-# Handler mapping for easy tool execution
 HANDLERS = {
     "chain_of_thought_step": chain_of_thought_step_handler,
     "get_chain_summary": get_chain_summary_handler,
@@ -266,22 +258,17 @@ HANDLERS = {
     "import_chain": import_chain_handler
 }
 
-# Convenience exports
 __all__ = [
     "TOOL_SPECS",
     "HANDLERS",
-    # Core classes
     "ChainOfThought",
     "ThoughtStep",
     "ThreadAwareChainOfThought",
     "StopReasonHandler",
     "BedrockStopReasonHandler",
     "AsyncChainOfThoughtProcessor",
-    # Dependency injection
     "ServiceRegistry",
-    # Generic handler factory
     "create_generic_handler",
-    # Handler functions
     "chain_of_thought_step_handler",
     "get_chain_summary_handler",
     "clear_chain_handler",
@@ -290,9 +277,7 @@ __all__ = [
     "calibrate_confidence_handler",
     "export_chain_handler",
     "import_chain_handler",
-    # Utilities
     "ParameterValidator",
 ]
 
-# Version info
 __version__ = "0.3.0"

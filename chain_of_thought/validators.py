@@ -20,12 +20,8 @@ Enhanced security features:
 - Memory exhaustion protection
 """
 
-# Configuration Constants
-
-# Text Processing Limits
 MAX_THOUGHT_LENGTH = 10000
 
-# Standard imports
 import re
 import html
 import unicodedata
@@ -51,84 +47,65 @@ class ParameterValidator:
     def __init__(self):
         pass
 
-    # Dangerous Unicode characters that should be removed
     _DANGEROUS_UNICODE_CHARS = {
-        '\u200B',  # Zero-width space
-        '\u200C',  # Zero-width non-joiner
-        '\u200D',  # Zero-width joiner
-        '\u2028',  # Line separator
-        '\u2029',  # Paragraph separator
-        '\uFEFF',  # Zero-width no-break space (BOM)
-        '\u2060',  # Word joiner
+        '\u200B',
+        '\u200C',
+        '\u200D',
+        '\u2028',
+        '\u2029',
+        '\uFEFF',
+        '\u2060',
     }
 
-    # Control characters that should be removed
     _CONTROL_CHARS = {
-        chr(i) for i in range(32) if i not in (9, 10, 13)  # Allow tab, newline, carriage return
+        chr(i) for i in range(32) if i not in (9, 10, 13)
     }
 
     def validate_thought_param(self, thought: str) -> str:
-        # Handle None as special case for better error handling
         if thought is None:
             raise ValueError("thought must be a string")
 
-        # Type validation with strict isinstance check
         if not isinstance(thought, str):
             raise ValueError("thought must be a string")
 
-        # Handle edge cases that could bypass length checks
-        # Allow empty strings for edge case testing
-        # Trim whitespace-only strings to empty
         if thought.isspace():
             thought = ""
 
-        # Sanitize unicode characters to prevent bypass attacks
         thought = self._sanitize_unicode_string(thought)
 
-        # Check length after unicode normalization (may change length)
         if len(thought) > MAX_THOUGHT_LENGTH:
             raise ValueError(f"thought cannot exceed {MAX_THOUGHT_LENGTH:,} characters")
 
-        # Strip leading/trailing whitespace and HTML escape
         return html.escape(thought.strip())
 
     def validate_confidence_param(self, confidence: float) -> float:
-        # Type validation with strict isinstance check - exclude numpy types for security
         if not isinstance(confidence, (int, float)) or type(confidence).__module__ == 'numpy':
             raise ValueError(f"confidence must be a number, got {type(confidence).__name__}")
 
-        # Handle NaN and infinite values
         if isinstance(confidence, float):
-            if confidence != confidence:  # NaN check
+            if confidence != confidence:
                 raise ValueError("confidence must be between 0.0 and 1.0")
             if confidence in (float('inf'), float('-inf')):
                 raise ValueError("confidence must be between 0.0 and 1.0")
 
-        # Range validation - confidence must be between 0.0 and 1.0
         if confidence < 0.0 or confidence > 1.0:
             raise ValueError("confidence must be between 0.0 and 1.0")
 
-        # Return as float for consistency
         return float(confidence)
 
     def validate_dependencies_param(self, dependencies: List[int]) -> List[int]:
-        # Type validation with strict isinstance check
         if not isinstance(dependencies, list):
             raise ValueError("dependencies must be a list")
 
-        # Resource limit validation - check list size before individual items
-        if len(dependencies) > 50:  # Max items limit for security
+        if len(dependencies) > 50:
             raise ValueError("dependencies cannot exceed 50 items")
 
-        # Validate each dependency
         validated_deps = []
         for dep in dependencies:
-            # Type validation for each item
             if not isinstance(dep, int):
                 raise ValueError("dependencies values must be integers")
 
-            # Range validation with bounds to prevent resource exhaustion
-            if dep < 1 or dep > 1000:  # Reasonable bounds for step numbers
+            if dep < 1 or dep > 1000:
                 raise ValueError("dependencies values must be integers between 1 and 1000")
 
             validated_deps.append(dep)
@@ -150,11 +127,9 @@ class ParameterValidator:
             TypeError: If step_number is not an integer
             ValueError: If step_number is outside valid range
         """
-        # Type validation
         if not isinstance(step_number, int):
             raise ValueError(f"{param_name} must be an integer")
 
-        # Bounds validation to prevent resource exhaustion
         if step_number < 1 or step_number > 1000:
             raise ValueError(f"{param_name} must be between 1 and 1000")
 
@@ -172,14 +147,11 @@ class ParameterValidator:
         Returns:
             Sanitized text
         """
-        # Remove dangerous Unicode characters
         for char in self._DANGEROUS_UNICODE_CHARS:
             text = text.replace(char, '')
 
-        # Remove control characters except allowed ones
         text = ''.join(char for char in text if char not in self._CONTROL_CHARS)
 
-        # Normalize Unicode to prevent bypass via different representations
         text = unicodedata.normalize('NFKC', text)
 
         return text
@@ -204,28 +176,22 @@ class ParameterValidator:
             TypeError: If items is not a list
             ValueError: If items contain invalid values or exceed limits
         """
-        # Type validation with strict isinstance check
         if not isinstance(items, list):
             raise ValueError(f"{param_name} must be a list")
 
-        # Resource limit validation
         if len(items) > max_items:
             raise ValueError(f"{param_name} list cannot exceed {max_items} items")
 
         validated_items = []
         for i, item in enumerate(items):
-            # Individual item validation
             if not isinstance(item, str):
                 raise ValueError(f"{param_name} items must be strings")
 
-            # Unicode sanitization
             sanitized_item = self._sanitize_unicode_string(item)
 
-            # Length validation
             if max_item_length and len(sanitized_item) > max_item_length:
                 raise ValueError(f"{param_name} items cannot exceed {max_item_length} characters")
 
-            # Escape HTML if requested
             if escape_items:
                 sanitized_item = html.escape(sanitized_item.strip())
 
@@ -269,7 +235,6 @@ class ParameterValidator:
             TypeError: If any parameter has wrong type
             ValueError: If any parameter has invalid value
         """
-        # Validate required parameters using existing methods
         validated_thought = self.validate_thought_param(thought)
         validated_step_number = self.validate_step_number(step_number, "step_number")
         validated_total_steps = self.validate_step_number(total_steps, "total_steps")  # Reuse step validation
@@ -277,13 +242,11 @@ class ParameterValidator:
         validated_reasoning_stage = self._validate_reasoning_stage(reasoning_stage)
         validated_next_step_needed = self._validate_boolean_param(next_step_needed, "next_step_needed")
 
-        # Validate optional parameters (handle None values)
         validated_dependencies = self._validate_optional_dependencies(dependencies)
         validated_contradicts = self._validate_optional_contradicts(contradicts)
         validated_evidence = self._validate_optional_string_list(evidence, "evidence")
         validated_assumptions = self._validate_optional_string_list(assumptions, "assumptions")
 
-        # Additional logical validation
         self._validate_step_relationships(validated_step_number, validated_total_steps)
 
         return {
@@ -316,21 +279,17 @@ class ParameterValidator:
         if not isinstance(reasoning_stage, str):
             raise ValueError("reasoning_stage must be a string")
 
-        # Sanitize the input
         sanitized_stage = self._sanitize_unicode_string(reasoning_stage)
 
         if not sanitized_stage or sanitized_stage.isspace():
             raise ValueError("reasoning_stage cannot be empty or whitespace only")
 
-        # Check length limit (100 characters for security)
         if len(sanitized_stage) > 100:
             raise ValueError("reasoning_stage cannot exceed 100 characters")
 
-        # Explicitly reject control characters that might survive sanitization
         if any(ord(c) < 32 and c != ' ' for c in sanitized_stage):
             raise ValueError("reasoning_stage can only contain letters, numbers, spaces, underscores, and hyphens")
 
-        # Allow only alphanumeric, spaces, underscores, and hyphens
         if not re.match(r'^[a-zA-Z0-9 \-_]+$', sanitized_stage):
             raise ValueError("reasoning_stage can only contain letters, numbers, spaces, underscores, and hyphens")
 
@@ -391,7 +350,6 @@ class ParameterValidator:
         if contradicts is None:
             return []
 
-        # Reuse the same validation logic as dependencies
         return self.validate_dependencies_param(contradicts)
 
     def _validate_optional_string_list(self, items: Optional[List[str]], param_name: str) -> List[str]:
@@ -460,29 +418,23 @@ class ParameterValidator:
         Raises:
             ValueError: If step_number or total_steps is not a valid positive integer
         """
-        # Reject boolean values (they are instances of int in Python)
         if isinstance(step_number, bool):
             raise ValueError("step_number must be a positive integer, not a boolean")
 
-        # Reject all float values for strict type safety
         if isinstance(step_number, float):
             raise ValueError("step_number must be a positive integer, not a float")
 
-        # Type validation - must be integer only
         if not isinstance(step_number, int):
             raise ValueError("step_number must be a positive integer")
 
-        # Validate step_number with specific error message first (priority)
         if step_number < 1 or step_number > 1000:
             raise ValueError("step_number must be between 1 and 1000")
 
-        # Validate total_steps with specific error message
         if not isinstance(total_steps, int):
             raise ValueError("total_steps must be an integer")
         if total_steps < 1 or total_steps > 1000:
             raise ValueError("total_steps must be between 1 and 1000")
 
-        # Validate relationship between step_number and total_steps
         self._validate_step_relationships(step_number, total_steps)
 
         return step_number
@@ -567,25 +519,20 @@ class ParameterValidator:
         Raises:
             ValueError: If items contain invalid values or exceed limits
         """
-        # Type validation
         if not isinstance(items, list):
             raise ValueError(f"{param_name} must be a list, got {type(items).__name__}")
 
-        # Resource limit validation
         if len(items) > max_items:
             raise ValueError(f"{param_name} list cannot exceed {max_items} items")
 
         validated_items = []
         for i, item in enumerate(items):
-            # Reject boolean values (they are instances of int in Python)
             if isinstance(item, bool):
                 raise ValueError(f"{param_name}[{i}] must be an integer, not a boolean")
 
-            # Reject non-integer types
             if not isinstance(item, int):
                 raise ValueError(f"{param_name}[{i}] must be an integer, got {type(item).__name__}")
 
-            # Range validation
             if item < min_value or item > max_value:
                 raise ValueError(f"{param_name}[{i}] must be between {min_value} and {max_value}")
 

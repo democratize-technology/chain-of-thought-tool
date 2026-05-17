@@ -29,9 +29,8 @@ class BedrockStopReasonHandler(StopReasonHandler):
     """Bedrock-specific stop reason handler that integrates with CoT flow."""
 
     def __init__(self, handlers: Optional[Dict[str, Callable]] = None, chain: Optional[Any] = None):
-        self.chain = chain  # If provided, use this chain instead of global
+        self.chain = chain
         if self.chain is not None:
-            # Create instance-specific handlers
             self.handlers = handlers or {
                 "chain_of_thought_step": self._create_chain_step_handler(),
                 "get_chain_summary": self._create_summary_handler(),
@@ -43,7 +42,6 @@ class BedrockStopReasonHandler(StopReasonHandler):
                 "calibrate_confidence": self._create_handler_factory("calibrate_confidence", takes_kwargs=True),
             }
         else:
-            # Use global handlers
             from .handlers import (
                 chain_of_thought_step_handler,
                 get_chain_summary_handler,
@@ -117,7 +115,6 @@ class BedrockStopReasonHandler(StopReasonHandler):
 
         handler = self.handlers[tool_name]
 
-        # Run handler in executor if it's synchronous
         if asyncio.iscoroutinefunction(handler):
             result = await handler(**tool_args)
         else:
@@ -153,13 +150,11 @@ class AsyncChainOfThoughtProcessor:
 
         self.conversation_id = conversation_id
         self.chain = ChainOfThought()
-        # Pass the chain instance to the handler so it uses this specific chain
         self.stop_handler = stop_handler or BedrockStopReasonHandler(chain=self.chain)
         self.request_validator = request_validator or default_validator
         self._tool_use_count = 0
         self._max_iterations = 20
 
-        # Timeout configuration
         self.aws_call_timeout = aws_call_timeout
         self.tool_call_timeout = tool_call_timeout
 
@@ -196,7 +191,6 @@ class AsyncChainOfThoughtProcessor:
         """Process Bedrock tool loop with CoT integration."""
         from .core import _safe_json_dumps
 
-        # Validate and sanitize the initial request to prevent injection attacks
         try:
             sanitized_request = self.request_validator.validate_and_sanitize_request(initial_request)
         except SecurityValidationError as e:
@@ -206,7 +200,6 @@ class AsyncChainOfThoughtProcessor:
         messages = sanitized_request.get("messages", []).copy()
 
         for iteration in range(max_iter):
-            # Use safe AWS call with timeout protection
             response = await self._safe_aws_call(
                 bedrock_client,
                 **{**sanitized_request, "messages": messages}
@@ -215,11 +208,9 @@ class AsyncChainOfThoughtProcessor:
             stop_reason = response.get("stopReason")
 
             if stop_reason == "end_turn":
-                # Check if CoT actually wants to continue
                 should_continue = await self.stop_handler.should_continue_reasoning(self.chain)
                 if not should_continue:
                     return response
-                # If CoT wants to continue but Bedrock says end_turn, we're done
                 return response
 
             elif stop_reason == "tool_use":
@@ -234,7 +225,6 @@ class AsyncChainOfThoughtProcessor:
                         tool_use_id = tool_use["toolUseId"]
 
                         try:
-                            # Use safe tool call with timeout protection
                             result = await asyncio.wait_for(
                                 self.stop_handler.execute_tool_call(tool_name, tool_input),
                                 timeout=self.tool_call_timeout
@@ -272,7 +262,6 @@ class AsyncChainOfThoughtProcessor:
                 self._tool_use_count += len(tool_results)
 
             else:
-                # Unexpected stop reason
                 return response
 
         return {
