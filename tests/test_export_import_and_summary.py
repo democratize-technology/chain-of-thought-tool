@@ -272,7 +272,6 @@ class TestImportChain:
 
     def test_import_chain_preserves_data_without_double_escaping(self, tmp_path):
         """import_chain preserves data as-is without double HTML escaping."""
-        import json
         p = tmp_path / "roundtrip.json"
         p.write_text(json.dumps({"steps": [{
             "thought": "<script>alert(1)</script>",
@@ -344,6 +343,50 @@ class TestImportChain:
         """Validator rejects step_number=0 (must be 1-1000), preventing ZeroDivisionError."""
         with pytest.raises(ValueError, match="step_number"):
             self.cot.add_step("thought", 0, 0, False)
+
+    def test_import_chain_preserves_original_created_at(self, tmp_path):
+        """created_at from the exported chain survives import round-trip."""
+        source = ChainOfThought()
+        original_created_at = source.metadata["created_at"]
+        source.add_step("Step", 1, 1, False, confidence=0.7)
+
+        p = tmp_path / "meta.json"
+        source.export_chain(str(p))
+
+        fresh = ChainOfThought()
+        fresh.import_chain(str(p))
+
+        assert fresh.metadata["created_at"] == original_created_at
+        assert fresh.metadata["total_confidence"] == pytest.approx(0.7)
+
+    def test_import_chain_preserves_thought_whitespace(self, tmp_path):
+        """Thought text with leading/trailing whitespace is preserved."""
+        p = tmp_path / "ws.json"
+        p.write_text(json.dumps({"steps": [{
+            "thought": "  indented thought  ",
+            "step_number": 1,
+            "total_steps": 1,
+            "next_step_needed": False,
+        }]}))
+        result = self.cot.import_chain(str(p))
+        assert result["status"] == "success"
+        assert self.cot.steps[0].thought == "  indented thought  "
+
+    def test_import_chain_preserves_evidence_assumptions_whitespace(self, tmp_path):
+        """Evidence and assumptions with leading/trailing whitespace are preserved."""
+        p = tmp_path / "ws_ea.json"
+        p.write_text(json.dumps({"steps": [{
+            "thought": "test",
+            "step_number": 1,
+            "total_steps": 1,
+            "next_step_needed": False,
+            "evidence": ["  evidence with spaces  "],
+            "assumptions": ["\tassumption with tab\t"],
+        }]}))
+        result = self.cot.import_chain(str(p))
+        assert result["status"] == "success"
+        assert self.cot.steps[0].evidence == ["  evidence with spaces  "]
+        assert self.cot.steps[0].assumptions == ["\tassumption with tab\t"]
 
 
 # ---------------------------------------------------------------------------

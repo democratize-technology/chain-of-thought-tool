@@ -107,6 +107,7 @@ def create_generic_handler(
             return _safe_json_dumps(result, indent=2)
 
         except Exception as e:
+            logging.error(f"Handler error for {tool_name}: {type(e).__name__}: {e}", exc_info=True)
             return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
 
     return handler
@@ -686,7 +687,7 @@ class ChainOfThought:
                     "message": f"Invalid step at index {idx}: 'timestamp' must be a string or null"
                 }
 
-            thought_val = d["thought"].strip()
+            thought_val = d["thought"]
 
             reasoning_stage_val_stripped = reasoning_stage_val.strip()
             if len(reasoning_stage_val_stripped) > 100:
@@ -704,10 +705,10 @@ class ChainOfThought:
                 }
 
             evidence_list = d.get("evidence") or []
-            evidence_sanitized = [item.strip() for item in evidence_list]
+            evidence_sanitized = list(evidence_list)
 
             assumptions_list = d.get("assumptions") or []
-            assumptions_sanitized = [item.strip() for item in assumptions_list]
+            assumptions_sanitized = list(assumptions_list)
 
             step = ThoughtStep(
                 thought=thought_val,
@@ -724,19 +725,24 @@ class ChainOfThought:
             )
             restored.append(step)
 
-        self.steps = restored
-        if not restored:
-            self.metadata["total_confidence"] = 0.0
-            self.metadata.pop("last_updated", None)
-        else:
-            self._update_metadata()
+        with self._lock:
+            self.steps = restored
+
+            imported_metadata = data.get("metadata", {})
+            if isinstance(imported_metadata, dict):
+                self.metadata.update(imported_metadata)
+
+            if not restored:
+                self.metadata["total_confidence"] = 0.0
+                self.metadata.pop("last_updated", None)
+            else:
+                self._update_metadata()
 
         return {
             "status": "success",
             "message": f"Chain imported from {file_path}",
             "steps_imported": len(self.steps)
         }
-
 
 
 def _safe_json_dumps(data: Any, indent: int = 2) -> str:
@@ -796,6 +802,7 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
                             logging.warning(f"_safe_json_dumps: list truncated from {len(obj)} to {MAX_LIST_SIZE}")
                         return [sanitize(item, depth + 1) for item in obj[:MAX_LIST_SIZE]]
                     except Exception:
+                        logging.error("_safe_json_dumps: list item sanitization failed", exc_info=True)
                         return [{"status": "error", "message": "List processing failed"}]
 
                 elif isinstance(obj, str):
@@ -839,6 +846,7 @@ def _safe_json_dumps(data: Any, indent: int = 2) -> str:
         return json_string
 
     except Exception:
+        logging.error("_safe_json_dumps: unexpected serialization failure", exc_info=True)
         return json.dumps({
             "status": "error",
             "message": "Data processing failed"

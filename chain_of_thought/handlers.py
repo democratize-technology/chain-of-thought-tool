@@ -4,6 +4,7 @@ Handler functions for Chain of Thought tools.
 Convenience wrappers and factory-created handlers for tool execution.
 All imports from core.py are deferred to avoid circular dependency.
 """
+import logging
 
 
 def chain_of_thought_step_handler(**kwargs) -> str:
@@ -42,6 +43,7 @@ def export_chain_handler(**kwargs) -> str:
         result = _chain_processor.export_chain(**kwargs)
         return _safe_json_dumps(result, indent=2)
     except Exception as e:
+        logging.error(f"export_chain_handler error: {type(e).__name__}: {e}", exc_info=True)
         return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
 
 
@@ -51,6 +53,7 @@ def import_chain_handler(**kwargs) -> str:
         result = _chain_processor.import_chain(**kwargs)
         return _safe_json_dumps(result, indent=2)
     except Exception as e:
+        logging.error(f"import_chain_handler error: {type(e).__name__}: {e}", exc_info=True)
         return _safe_json_dumps({"status": "error", "message": str(e)}, indent=2)
 
 
